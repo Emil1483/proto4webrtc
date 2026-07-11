@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
+from proto4webrtc_codegen.naming import to_snake_case
+
 DATA_STREAM_EXT = "proto4webrtc.data_stream"
 MEDIA_STREAM_EXT = "proto4webrtc.media_stream"
 
@@ -137,5 +139,13 @@ def extract_streams(
     dupes = {l for l in labels if labels.count(l) > 1}
     if dupes:
         raise ExtractError(f"duplicate stream labels: {sorted(dupes)}")
+
+    attrs = [to_snake_case(s.message) for s in data_streams + media_streams]
+    attr_dupes = {a for a in attrs if attrs.count(a) > 1}
+    if attr_dupes:
+        raise ExtractError(
+            f"duplicate Proto4WebrtcProducer attribute names: {sorted(attr_dupes)} "
+            "(derived from message name; rename one of the colliding messages)"
+        )
 
     return data_streams, media_streams

@@ -28,4 +28,9 @@ import { TelemetryStream } from "./gen/proto4webrtc";
 TelemetryStream.attach(dataConsumer, (msg) => console.log(msg.value0));
 ```
 
+Data streams also get `TelemetryStream.subscribe(sfu, onMessage)` — a typed
+wrapper for server-side, in-process access (no browser, no WebRTC) over a
+[`Proto4WebrtcSfu`](proto4webrtc/README.md) (npm package `proto4webrtc`,
+`ts/proto4webrtc` in this repo — the mediasoup SFU runtime).
+
 Full docs: https://github.com/Emil1483/proto4webrtc

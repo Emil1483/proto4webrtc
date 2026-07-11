@@ -5,6 +5,7 @@ Define your WebRTC data/media streams once in protobuf, generate typed
 
 - **Python producer** (robot / backend, [pymediasoup](https://github.com/skymaze/pymediasoup)) — pip package [`proto4webrtc`](https://pypi.org/project/proto4webrtc/)
 - **TypeScript consumer** (browser, [mediasoup-client](https://www.npmjs.com/package/mediasoup-client)) — npm package [`protoc-gen-proto4webrtc-ts`](https://www.npmjs.com/package/protoc-gen-proto4webrtc-ts)
+- **TypeScript SFU runtime** (server, [mediasoup](https://mediasoup.org/)) — npm package [`proto4webrtc`](https://www.npmjs.com/package/proto4webrtc) (`ts/proto4webrtc`)
 
 Both are standard protoc plugins, so they compose with protoc or
 [buf](https://buf.build). Other languages can be added as sibling plugins.
@@ -122,22 +123,30 @@ regenerates.
 
 ### Python (producer side)
 
+`Proto4WebrtcProducer` is the whole client: signaling, device/transport setup
+and the reconnect loop are handled for you. One attribute per declared
+stream, named `snake_case(message name)`:
+
 ```python
-from proto4webrtc_gen import Telemetry, TelemetryProducer, CameraProducer
+from proto4webrtc_gen import Proto4WebrtcProducer, Telemetry
 
-# transport: an open pymediasoup send transport
-telemetry = await TelemetryProducer.create(transport)
-camera = await CameraProducer.create(transport, track)  # aiortc track
+client = Proto4WebrtcProducer(signaling_url="ws://localhost:3000/api/sfu")
+client.run_forever()  # blocking: connects, reconnects on drop, until stop()
 
-telemetry.send(Telemetry(stamp=time.time(), value0=0.4, value1=-0.2))
+# from any thread, anytime — safe no-op before the first connection:
+client.telemetry.send(Telemetry(stamp=time.time(), value0=0.4, value1=-0.2))
+client.camera.push(frame)  # av.VideoFrame/AudioFrame, or a numpy ndarray (rgb24)
 ```
 
-Delivery and backpressure declared in the protofile are baked into the
-wrapper: `send()` encodes, checks the channel state, and (for
-`DROP_IF_BUFFERED`) drops the message instead of queueing lag. It returns
-`False` when a message was dropped.
+Delivery and backpressure declared in the protofile are baked into each
+stream's `send()`: it encodes, checks the channel state, and (for
+`DROP_IF_BUFFERED`) drops the message instead of queueing lag — returning
+`False` when a message was dropped (or `None` when called off the client's
+event loop thread, e.g. a ROS callback — dispatched, but the result can't be
+observed synchronously). `push()` feeds a track the client owns internally;
+no manual aiortc track/queue/pts code needed.
 
-### TypeScript (consumer side)
+### TypeScript (consumer side, browser)
 
 ```ts
 import { TelemetryStream, CameraStream, type Telemetry } from "./gen/proto4webrtc";
@@ -153,6 +162,41 @@ TelemetryStream.attach(dataConsumer, (msg: Telemetry) => {
 
 `attach()` decodes every data-channel message into the typed callback;
 `decode()` is available for manual wiring.
+
+### TypeScript (SFU side, server)
+
+`npm install proto4webrtc`. `Proto4WebrtcSfu` is the whole server: signaling,
+Worker/Router/transport setup, and the reconnect-tolerant registries are
+handled for you — sane defaults, every field overridable.
+
+```ts
+import { Proto4WebrtcSfu } from "proto4webrtc";
+import { TelemetryStream } from "./gen/proto4webrtc";
+
+const sfu = new Proto4WebrtcSfu();
+
+// e.g. api/sfu/route.ts (next-ws), or any node `ws` server:
+export async function UPGRADE(client: import("ws").WebSocket) {
+  sfu.handleWSClient(client);
+}
+
+// e.g. api/status/route.ts:
+export function GET() {
+  return Response.json(sfu.getStatus());
+}
+
+// anywhere else in the same server process — no websocket, no browser:
+const unsubscribe = TelemetryStream.subscribe(sfu, (msg) => {
+  console.log(msg.stamp, msg.value0);
+});
+```
+
+`subscribe()` (generated per data stream, wrapping `Proto4WebrtcSfu.subscribe()`)
+is in-process access to a data stream via a mediasoup `DirectTransport` — no
+browser, no WebRTC. Safe to call before the matching producer connects, and
+keeps working across producer reconnects. Real WebRTC media/video consumption
+is unchanged — browsers still connect to `handleWSClient`'s signaling
+endpoint with real `mediasoup-client`.
 
 ## Options reference
 
@@ -177,13 +221,19 @@ package).
 pip install -e python
 python -m proto4webrtc_codegen --proto example/proto --out example/gen-py
 
-# TypeScript: plugin deps + generate from the example protos
+# TypeScript codegen plugin: deps + generate from the example protos
 npm --prefix ts install
 buf generate --template example/buf.gen.yaml
+
+# TypeScript SFU runtime: install, typecheck, test
+npm --prefix ts/proto4webrtc install
+npm --prefix ts/proto4webrtc run typecheck
+npm --prefix ts/proto4webrtc test
 ```
 
 ## Publishing
 
 - Options module: `buf registry login`, then `buf push` from the repo root.
 - pip: `cd python && python -m build && twine upload dist/*`
-- npm: `cd ts && npm publish`
+- npm (codegen plugin): `cd ts && npm publish`
+- npm (SFU runtime): `cd ts/proto4webrtc && npm run build && npm publish`

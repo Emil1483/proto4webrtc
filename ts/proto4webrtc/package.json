@@ -1,0 +1,45 @@
+{
+  "name": "proto4webrtc",
+  "version": "0.2.0",
+  "description": "mediasoup SFU runtime for proto4webrtc-annotated protofiles: signaling, transports, and in-process data-stream subscriptions",
+  "license": "MIT",
+  "author": "Emil Djupvik",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Emil1483/proto4webrtc.git",
+    "directory": "ts/proto4webrtc"
+  },
+  "keywords": [
+    "mediasoup",
+    "webrtc",
+    "sfu",
+    "protobuf"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/__tests__/*.test.ts"
+  },
+  "dependencies": {
+    "mediasoup": "^3.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "ws": "^8.21.0"
+  }
+}

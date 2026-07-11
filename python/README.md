@@ -11,11 +11,17 @@ python -m proto4webrtc_codegen --proto path/to/protos --out out/
 ```
 
 ```python
-from proto4webrtc_gen import Telemetry, TelemetryProducer
+from proto4webrtc_gen import Proto4WebrtcProducer, Telemetry
 
-producer = await TelemetryProducer.create(send_transport)
-producer.send(Telemetry(stamp=time.time(), value0=0.4))
+client = Proto4WebrtcProducer(signaling_url="ws://localhost:3000/api/sfu")
+client.run_forever()  # blocking: connects, reconnects on drop, until stop()
+
+client.telemetry.send(Telemetry(stamp=time.time(), value0=0.4))
 ```
+
+`Proto4WebrtcProducer` owns the whole client — signaling, device/transport
+setup, and the reconnect loop. `send()`/`push()` are safe to call from any
+thread, anytime (a no-op before the first connection).
 
 Also installs the raw protoc plugin `protoc-gen-proto4webrtc_python`
 (`--proto4webrtc_python_out`).
