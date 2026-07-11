@@ -80,12 +80,15 @@ Output in `out/`:
 - `<your packages>/*_pb2.py` (+ `.pyi`) — protobuf message classes
 - `proto4webrtc_gen/producers.py` — the mediasoup producer wrappers
 
-Prefer raw protoc? The pip package also installs the plugin executable:
+Prefer raw protoc? The pip package also installs the plugin executable.
+Note `proto4webrtc/options.proto` is **not** a positional target below —
+only `-I`-resolved as an import, so protoc doesn't generate a competing
+`proto4webrtc/options_pb2.py` (see Options reference below for why):
 
 ```sh
 protoc -I protos \
   --python_out=out --proto4webrtc_python_out=out \
-  protos/example/streams.proto proto4webrtc/options.proto
+  protos/example/streams.proto
 ```
 
 ### TypeScript consumers
@@ -214,12 +217,33 @@ annotations into the descriptors it hands them. The file only matters when
 *authoring* protofiles (BSR dep above, or the copy bundled in the pip
 package).
 
+`proto4webrtc/options.proto` is resolved as an *import only* when generating
+Python — never compiled into a per-project `proto4webrtc/options_pb2.py`.
+That module already ships inside the `proto4webrtc` pip package itself
+(`python/proto4webrtc/options_pb2.py`, checked in, regenerated only when
+`options.proto` changes — see Development below), because `proto4webrtc` is
+also the name of the producer runtime package: a second, per-project
+`proto4webrtc/` directory would be a same-named, colliding top-level Python
+package, and whichever one landed first on `sys.path` would silently shadow
+the other.
+
 ## Development
 
 ```sh
 # Python: editable install + generate from the example protos
 pip install -e python
 python -m proto4webrtc_codegen --proto example/proto --out example/gen-py
+
+# Python: only after changing proto4webrtc/options.proto — refresh the copy
+# bundled inside the runtime package (python/proto4webrtc/options_pb2.py)
+python -c "
+from grpc_tools import protoc
+from importlib import resources
+protoc.main(['protoc', '-Ipython/proto4webrtc_codegen/proto',
+             '-I' + str(resources.files('grpc_tools') / '_proto'),
+             '--python_out=python', '--pyi_out=python',
+             'proto4webrtc/options.proto'])
+"
 
 # TypeScript codegen plugin: deps + generate from the example protos
 npm --prefix ts install

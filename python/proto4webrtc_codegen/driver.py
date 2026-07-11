@@ -7,7 +7,17 @@ metadata, then renders proto4webrtc_gen/producers.py.
 The package bundles proto4webrtc/options.proto: if none of the given roots
 contains it (the usual case — proto authors resolve the import from the Buf
 Schema Registry, which never materializes the file locally), the bundled
-copy is added to the include path and compiled automatically.
+copy's directory is added to the include path so `import
+"proto4webrtc/options.proto"` resolves — but it is deliberately NOT passed to
+protoc as a --python_out target. protoc only generates code for files listed
+as positional args; a file reached purely via -I is still available for
+import resolution and lands in --descriptor_set_out (with --include_imports)
+for extract_streams(), but no proto4webrtc/options_pb2.py is written. That
+matters because this pip package is itself importable as `proto4webrtc`
+(the producer runtime, `proto4webrtc.runtime`) — generating options_pb2.py
+under a directory literally named proto4webrtc/ would collide with it: two
+same-named non-namespace Python packages on sys.path, one silently shadowing
+the other depending on path order.
 
 Generated packages land in out_dir with __init__.py files so setuptools'
 find_packages() picks them up — call generate() from setup.py to regenerate
@@ -62,8 +72,9 @@ def generate(proto_dirs, out_dir) -> list[Path]:
 
     include_dirs = [str(d) for d in proto_dirs]
     if OPTIONS_PROTO not in proto_files:
+        # Import-only: resolved via -I, never a --python_out target (see the
+        # module docstring for why proto4webrtc/options_pb2.py must not exist).
         include_dirs.append(bundled_options_include())
-        proto_files.append(OPTIONS_PROTO)
 
     with tempfile.NamedTemporaryFile(suffix=".binpb") as tmp:
         args = [

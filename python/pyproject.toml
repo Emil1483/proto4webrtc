@@ -1,6 +1,6 @@
 [project]
 name = "proto4webrtc"
-version = "0.2.0"
+version = "0.2.1"
 description = "Generate mediasoup producer code (pymediasoup) from proto4webrtc-annotated protofiles"
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,3 +35,4 @@ include = ["proto4webrtc_codegen*", "proto4webrtc*"]
 
 [tool.setuptools.package-data]
 proto4webrtc_codegen = ["templates/*.j2", "proto/proto4webrtc/*.proto"]
+proto4webrtc = ["*.pyi"]
