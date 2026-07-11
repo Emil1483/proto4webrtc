@@ -6,7 +6,7 @@
 version: v2
 modules:
   - path: proto
-    name: buf.build/emil1483/proto4webrtc
+    name: buf.build/djupvik/proto4webrtc
   - path: example/proto
 lint:
   # BASIC: structure + casing rules, without STANDARD's enum-value-prefix and
