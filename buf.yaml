@@ -1,0 +1,19 @@
+# Buf v2 workspace: the publishable options module (proto/) plus the example
+# protos used by the docs and the plugin tests (example/proto/).
+#
+# Publish the options with `buf registry login` + `buf push` (pushes the
+# named module only).
+version: v2
+modules:
+  - path: proto
+    name: buf.build/emil1483/proto4webrtc
+  - path: example/proto
+lint:
+  # BASIC: structure + casing rules, without STANDARD's enum-value-prefix and
+  # package-version-suffix requirements (short enum values, unversioned
+  # packages).
+  use:
+    - BASIC
+breaking:
+  use:
+    - FILE

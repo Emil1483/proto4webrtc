@@ -1,0 +1,44 @@
+// Example stream declarations, used by the README and the plugin tests.
+
+syntax = "proto3";
+
+package example;
+
+import "proto4webrtc/options.proto";
+
+// Small, frequent telemetry sample: unreliable delivery, a lost sample is
+// superseded by the next one anyway.
+message Telemetry {
+  option (proto4webrtc.data_stream) = {
+    label: "telemetry"
+    delivery: UNRELIABLE
+    backpressure: BUFFER_ALL
+  };
+
+  double stamp = 1;
+  float value0 = 2;
+  float value1 = 3;
+}
+
+// Large payloads: reliable + ordered (big messages fragment into many SCTP
+// chunks), newest-wins backpressure on the sender.
+message Snapshot {
+  option (proto4webrtc.data_stream) = {
+    label: "snapshot"
+    delivery: RELIABLE_ORDERED
+    backpressure: DROP_IF_BUFFERED
+    max_buffered_factor: 2
+  };
+
+  double stamp = 1;
+  bytes data = 2;
+}
+
+// Declaration-only: frames travel as RTP, so the message stays empty.
+message Camera {
+  option (proto4webrtc.media_stream) = {
+    label: "camera"
+    kind: VIDEO
+    video_codec: VP8
+  };
+}

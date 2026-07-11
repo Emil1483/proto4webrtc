@@ -1,0 +1,79 @@
+// proto4webrtc: custom options that turn a plain protobuf message into a
+// mediasoup stream declaration.
+//
+// A message annotated with (proto4webrtc.data_stream) becomes:
+//   - Python:     a DataProducer wrapper  (producer side, pymediasoup)
+//   - TypeScript: a DataConsumer wrapper  (consumer side, mediasoup-client)
+// The message body defines the wire payload, encoded as binary protobuf on
+// the SCTP data channel. One channel label per message type, so no envelope
+// or type tag is needed on the wire.
+//
+// A message annotated with (proto4webrtc.media_stream) is declaration-only:
+// its frames travel as RTP (not protobuf), so the message body must be empty.
+// The generators only wire up produce/consume for the track and tag it with
+// appData.label so multiple tracks can be told apart.
+
+syntax = "proto3";
+
+package proto4webrtc;
+
+import "google/protobuf/descriptor.proto";
+
+// How the SCTP data channel is configured.
+enum Delivery {
+  DELIVERY_UNSPECIFIED = 0;
+  // Ordered + retransmitted. Required for messages that fragment into many
+  // SCTP chunks (anything beyond ~64 KiB): unordered/unreliable delivery of
+  // fragmented messages loses most of them end-to-end.
+  RELIABLE_ORDERED = 1;
+  // Unordered, maxRetransmits = 0. Fire-and-forget; lowest latency. Only for
+  // small messages where the next sample supersedes a lost one.
+  UNRELIABLE = 2;
+}
+
+// Sender-side behavior when the channel can't keep up.
+enum Backpressure {
+  BACKPRESSURE_UNSPECIFIED = 0;
+  // Hand every message to the channel; let SCTP buffer.
+  BUFFER_ALL = 1;
+  // Newest wins: drop the outgoing message if bufferedAmount already exceeds
+  // max_buffered_factor x its size. Use for streams where only the latest
+  // sample matters (e.g. point clouds).
+  DROP_IF_BUFFERED = 2;
+}
+
+message DataStreamOptions {
+  // mediasoup dataProducer/dataConsumer label. Must be unique across all
+  // streams in the compiled set; consumers select the channel by it.
+  string label = 1;
+  Delivery delivery = 2;
+  Backpressure backpressure = 3;
+  // For DROP_IF_BUFFERED: drop when bufferedAmount > factor * message size.
+  // 0 means the generator default (2).
+  uint32 max_buffered_factor = 4;
+}
+
+enum MediaKind {
+  MEDIA_KIND_UNSPECIFIED = 0;
+  VIDEO = 1;
+  AUDIO = 2;
+}
+
+enum VideoCodec {
+  VIDEO_CODEC_UNSPECIFIED = 0;  // router default
+  VP8 = 1;
+  VP9 = 2;
+  H264 = 3;
+}
+
+message MediaStreamOptions {
+  // Track identifier, sent as producer appData.label. Unique across streams.
+  string label = 1;
+  MediaKind kind = 2;
+  VideoCodec video_codec = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  DataStreamOptions data_stream = 50000;
+  MediaStreamOptions media_stream = 50001;
+}

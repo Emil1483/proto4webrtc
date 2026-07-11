@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+*.egg-info/
+dist/
+example/gen-ts/
+example/gen-py/
+build/
