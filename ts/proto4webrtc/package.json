@@ -1,6 +1,6 @@
 {
   "name": "proto4webrtc",
-  "version": "0.4.2",
+  "version": "1.0.0",
   "description": "mediasoup runtime for proto4webrtc-annotated protofiles: SFU (signaling, transports, in-process data-stream subscriptions) and browser consumer client",
   "license": "MIT",
   "author": "Emil Djupvik",
@@ -37,6 +37,7 @@
     "test": "node --import tsx --test src/__tests__/*.test.ts"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.12.1",
     "mediasoup": "^3.21.0",
     "mediasoup-client": "^3.21.0"
   },

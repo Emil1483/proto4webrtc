@@ -11,8 +11,17 @@ authors = [
 requires-python = ">=3.10,<4"
 dependencies = [
     "rich (>=14.3.3,<15.0.0)",
-    "proto4webrtc (>=0.2.1,<0.3.0)"
+    "proto4webrtc"
 ]
+
+# Local checkout, not PyPI: the example tracks the repo's runtime/codegen as
+# it stands. NOT editable: colcon reaches this venv via PYTHONPATH from the
+# system python, which never processes the .pth hook an editable (PEP 660)
+# install leaves in site-packages — the package must exist there as real
+# files. Re-run `poetry lock && poetry install --no-root` after changing
+# python/.
+[tool.poetry.dependencies]
+proto4webrtc = { path = "../../../python", develop = false }
 
 
 [build-system]

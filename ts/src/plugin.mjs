@@ -46,6 +46,7 @@ function generate(request) {
 
   const dataExt = registry.getExtension("proto4webrtc.data_stream");
   const mediaExt = registry.getExtension("proto4webrtc.media_stream");
+  const rpcExt = registry.getExtension("proto4webrtc.rpc_service");
   const mediaKind = registry.getEnum("proto4webrtc.MediaKind");
   if (!dataExt || !mediaExt || !mediaKind) {
     throw new GenError(
@@ -55,6 +56,7 @@ function generate(request) {
 
   const dataStreams = [];
   const mediaStreams = [];
+  const rpcServices = [];
 
   for (const file of registry.files) {
     if (!targets.has(file.proto.name)) continue;
@@ -91,13 +93,56 @@ function generate(request) {
         });
       }
     }
+    for (const service of file.services) {
+      // rpcExt is missing when the compiled set carries a pre-1.0
+      // options.proto; only then can no service be annotated.
+      if (!rpcExt || !hasOption(service, rpcExt)) continue;
+      const o = getOption(service, rpcExt);
+      if (!o.label)
+        throw new GenError(`${service.typeName}: rpc_service needs a label`);
+      const methods = service.methods.map((m) => {
+        if (m.methodKind !== "unary")
+          throw new GenError(
+            `${service.typeName}.${m.name}: rpc_service supports unary methods only`,
+          );
+        return {
+          wireName: m.name,
+          localName: m.localName, // camelCase, e.g. "setLight"
+          input: { message: m.input.name, protoFile: m.input.file.proto.name },
+          output: { message: m.output.name, protoFile: m.output.file.proto.name },
+        };
+      });
+      if (!methods.length)
+        throw new GenError(`${service.typeName}: rpc_service declares no methods`);
+      rpcServices.push({
+        service: service.name,
+        typeName: service.typeName,
+        protoFile: file.proto.name,
+        label: o.label,
+        methods,
+      });
+    }
   }
 
-  const labels = [...dataStreams, ...mediaStreams].map((s) => s.label);
+  const labels = [...dataStreams, ...mediaStreams, ...rpcServices].map(
+    (s) => s.label,
+  );
   const dupes = [...new Set(labels.filter((l, i) => labels.indexOf(l) !== i))];
   if (dupes.length) throw new GenError(`duplicate stream labels: ${dupes}`);
 
-  return render(dataStreams, mediaStreams);
+  const methodNames = rpcServices.flatMap((s) =>
+    s.methods.map((m) => m.localName),
+  );
+  const methodDupes = [
+    ...new Set(methodNames.filter((n, i) => methodNames.indexOf(n) !== i)),
+  ];
+  if (methodDupes.length)
+    throw new GenError(
+      `duplicate rpc method names across services: ${methodDupes} ` +
+        "(client.rpc merges every service's methods; rename one)",
+    );
+
+  return render(dataStreams, mediaStreams, rpcServices);
 }
 
 // protoc-gen-es output path for a proto file, relative to the shared out dir.
@@ -107,20 +152,41 @@ const pbModule = (protoFile) => "./" + protoFile.replace(/\.proto$/, "_pb");
 const exportName = (message) =>
   message.endsWith("Stream") ? message : `${message}Stream`;
 
-function render(dataStreams, mediaStreams) {
-  const importBlocks = [...new Set(dataStreams.map((s) => s.protoFile))].map(
-    (f) => {
-      const messages = dataStreams
-        .filter((s) => s.protoFile === f)
-        .map((s) => s.message);
-      const schemas = messages.map((m) => `${m}Schema`);
-      return (
-        `import { ${schemas.join(", ")} } from "${pbModule(f)}";\n` +
-        `import type { ${messages.join(", ")} } from "${pbModule(f)}";\n` +
-        `export type { ${messages.join(", ")} };`
-      );
-    },
-  );
+function render(dataStreams, mediaStreams, rpcServices) {
+  // proto file -> message names whose schema + type the generated file needs.
+  const neededByFile = new Map();
+  const need = (protoFile, message) => {
+    if (!neededByFile.has(protoFile)) neededByFile.set(protoFile, new Set());
+    neededByFile.get(protoFile).add(message);
+  };
+  for (const s of dataStreams) need(s.protoFile, s.message);
+  for (const s of rpcServices)
+    for (const m of s.methods) {
+      need(m.input.protoFile, m.input.message);
+      need(m.output.protoFile, m.output.message);
+    }
+
+  const nameToFiles = new Map();
+  for (const [f, set] of neededByFile)
+    for (const m of set)
+      nameToFiles.set(m, [...(nameToFiles.get(m) ?? []), f]);
+  const colliding = [...nameToFiles.entries()].filter(([, fs]) => fs.length > 1);
+  if (colliding.length)
+    throw new GenError(
+      `colliding message names across proto files: ${colliding
+        .map(([n]) => n)
+        .join(", ")}`,
+    );
+
+  const importBlocks = [...neededByFile.entries()].map(([f, set]) => {
+    const messages = [...set].sort();
+    const schemas = messages.map((m) => `${m}Schema`);
+    return (
+      `import { ${schemas.join(", ")} } from "${pbModule(f)}";\n` +
+      `import type { ${messages.join(", ")} } from "${pbModule(f)}";\n` +
+      `export type { ${messages.join(", ")} };`
+    );
+  });
 
   const dataBlocks = dataStreams.map((s) => {
     const subscribeBody = s.hasStamp
@@ -198,6 +264,44 @@ export const ${exportName(s.message)} = {
 } as const;`,
   );
 
+  // Typed rpc: one camelCase method per rpc of every annotated service, all
+  // merged onto client.rpc (uniqueness enforced in generate()).
+  const rpcMethods = rpcServices.flatMap((s) =>
+    s.methods.map((m) => ({ service: s, method: m })),
+  );
+  const rpcInterface = rpcServices.length
+    ? `\
+/** Typed rpc methods; requests travel over WebRTC data channels to the robot. */
+export interface RpcMethods {
+${rpcMethods
+  .map(
+    ({ service, method }) => `\
+  /** ${service.typeName}.${method.wireName} (channel base "${service.label}"). */
+  ${method.localName}(
+    request: MessageInitShape<typeof ${method.input.message}Schema>,
+    options?: { timeoutMs?: number },
+  ): Promise<${method.output.message}>;`,
+  )
+  .join("\n")}
+}
+`
+    : "";
+  const rpcWiring = rpcMethods
+    .map(
+      ({ service, method }) => `\
+    ${method.localName}: async (request, options) =>
+      fromBinary(
+        ${method.output.message}Schema,
+        await client.callRpc(
+          "${service.label}",
+          "${method.wireName}",
+          toBinary(${method.input.message}Schema, create(${method.input.message}Schema, request)),
+          options,
+        ),
+      ),`,
+    )
+    .join("\n");
+
   // Typed client: connectToSfu() returns the runtime's Proto4WebrtcClient
   // extended with one subscribeTo<Stream>() method per declared stream.
   const clientMethods = [
@@ -210,19 +314,27 @@ export const ${exportName(s.message)} = {
       sig: `subscribeTo${exportName(s.message)}(onTrack: (track: MediaStreamTrack) => void): () => void;`,
     })),
   ];
-  const clientBlock = clientMethods.length
-    ? `\
-/** Proto4WebrtcClient extended with a typed subscribe method per stream. */
+  const usageDoc = clientMethods.length
+    ? `\n *     client.subscribeTo${clientMethods[0].name}((...) => { ... });`
+    : rpcMethods.length
+      ? `\n *     await client.rpc.${rpcMethods[0].method.localName}({ ... });`
+      : "";
+  const clientBlock =
+    clientMethods.length || rpcMethods.length
+      ? `\
+/** Proto4WebrtcClient extended with the typed per-stream/rpc methods. */
 export interface StreamsClient extends Proto4WebrtcClient {
-${clientMethods.map((m) => `  ${m.sig}`).join("\n")}
+${[
+  ...clientMethods.map((m) => `  ${m.sig}`),
+  ...(rpcServices.length ? ["  rpc: RpcMethods;"] : []),
+].join("\n")}
 }
 
 /**
  * Connect to the SFU signaling endpoint (proto4webrtc/client's connectToSfu)
- * and attach the typed per-stream subscribe methods:
+ * and attach the typed per-stream subscribe and rpc methods:
  *
- *     const client = await connectToSfu({ onConnectionState: setState });
- *     client.subscribeTo${clientMethods[0].name}((...) => { ... });
+ *     const client = await connectToSfu({ onConnectionState: setState });${usageDoc}
  */
 export async function connectToSfu(
   options?: Proto4WebrtcClientOptions,
@@ -233,11 +345,15 @@ ${clientMethods
     (m) =>
       `  client.subscribeTo${m.name} = (cb) => ${m.name}.subscribe(client, cb);`,
   )
-  .join("\n")}
+  .join("\n")}${
+    rpcServices.length
+      ? `\n  client.rpc = {\n${rpcWiring}\n  };`
+      : ""
+  }
   return client;
 }
 `
-    : "";
+      : "";
 
   // A local structural type, not an import of the real Proto4WebrtcSfu class
   // (npm package "proto4webrtc") — so browser-only consumers (attach() against
@@ -280,7 +396,10 @@ ${clientMethods
 //
 //     TelemetryStream.attach(dataConsumer, (msg) => { ... });
 
-import { fromBinary } from "@bufbuild/protobuf";
+import { ${
+    rpcServices.length ? "create, fromBinary, toBinary" : "fromBinary"
+  } } from "@bufbuild/protobuf";
+${rpcServices.length ? 'import type { MessageInitShape } from "@bufbuild/protobuf";\n' : ""}\
 import {
   connectToSfu as proto4webrtcConnect,
   type Proto4WebrtcClient,
@@ -291,5 +410,6 @@ ${importBlocks.join("\n")}
 ${subscribableInterface}
 ${[...dataBlocks, ...mediaBlocks].join("\n\n")}
 
+${rpcInterface}
 ${clientBlock}`;
 }

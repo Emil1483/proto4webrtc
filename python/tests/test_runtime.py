@@ -204,3 +204,89 @@ async def test_reader_dispatches_error_response_as_exception():
 
     with pytest.raises(RuntimeError, match="boom"):
         fut.result()
+
+
+# --- rpc services -----------------------------------------------------------
+
+import logging
+
+from proto4webrtc.runtime import RpcServiceBase
+from proto4webrtc.rpc_pb2 import RpcRequest, RpcResponse
+from proto4webrtc.options_pb2 import DataStreamOptions  # any small message
+
+
+class EchoService(RpcServiceBase):
+    LABEL = "svc"
+    _METHODS = {"Echo": ("echo", DataStreamOptions)}
+
+    async def echo(self, request):
+        return DataStreamOptions(label=request.label + "!")
+
+
+class FailingService(EchoService):
+    async def echo(self, request):
+        raise ValueError("nope")
+
+
+def _request(method="Echo", label="hi"):
+    payload = DataStreamOptions(label=label).SerializeToString()
+    return RpcRequest(
+        client_id="c1", id=7, method=method, payload=payload
+    ).SerializeToString()
+
+
+@pytest.mark.asyncio
+async def test_rpc_service_dispatches_and_responds():
+    svc = EchoService()
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(), logging.getLogger("test"))
+
+    assert len(svc._response_dp.sent) == 1
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert (res.client_id, res.id, res.error) == ("c1", 7, "")
+    assert DataStreamOptions.FromString(res.payload).label == "hi!"
+
+
+@pytest.mark.asyncio
+async def test_rpc_service_unknown_method_is_an_error_response():
+    svc = EchoService()
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(method="Nope"), logging.getLogger("test"))
+
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert "unknown method" in res.error
+    assert res.payload == b""
+
+
+@pytest.mark.asyncio
+async def test_rpc_service_handler_exception_is_an_error_response():
+    svc = FailingService()
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(), logging.getLogger("test"))
+
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert res.error == "nope"
+
+
+@pytest.mark.asyncio
+async def test_rpc_service_without_channel_swallows_response():
+    svc = EchoService()  # _response_dp is None (not connected yet)
+    await svc._handle_request(_request(), logging.getLogger("test"))
+
+
+def test_reader_events_reach_handlers():
+    async def fake_messages():
+        yield '{"event": "newDataProducer", "label": "svc/requests", "dataProducerId": "d1"}'
+
+    client = Proto4WebrtcClient("ws://unused")
+    seen = []
+    client._event_handlers.append(seen.append)
+
+    asyncio.run(client._reader(fake_messages()))
+
+    assert seen == [
+        {"event": "newDataProducer", "label": "svc/requests", "dataProducerId": "d1"}
+    ]

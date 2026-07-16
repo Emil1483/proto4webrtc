@@ -10,7 +10,11 @@ to a snake_case(message name) attribute.
 
 from jinja2 import Environment, PackageLoader
 
-from proto4webrtc_codegen.extract import DataStreamSpec, MediaStreamSpec
+from proto4webrtc_codegen.extract import (
+    DataStreamSpec,
+    MediaStreamSpec,
+    RpcServiceSpec,
+)
 from proto4webrtc_codegen.naming import to_snake_case
 
 _env = Environment(
@@ -79,28 +83,80 @@ def _media_context(s: MediaStreamSpec) -> dict:
     }
 
 
+def _rpc_context(s: RpcServiceSpec) -> dict:
+    methods = [
+        {
+            "attr": to_snake_case(m.name),
+            "wire_name": m.name,
+            "request": m.input_message,
+            "request_ref": f"{_alias(m.input_proto_file)}.{m.input_message}",
+            "response": m.output_message,
+            "response_ref": f"{_alias(m.output_proto_file)}.{m.output_message}",
+        }
+        for m in s.methods
+    ]
+    return {
+        "attr": to_snake_case(s.service),
+        "class_name": f"{s.service}Base",
+        "service": s.service,
+        "full_name": s.full_name,
+        "label": s.label,
+        "methods": methods,
+    }
+
+
 def render_producers(
-    data_streams: list[DataStreamSpec], media_streams: list[MediaStreamSpec]
+    data_streams: list[DataStreamSpec],
+    media_streams: list[MediaStreamSpec],
+    rpc_services: list[RpcServiceSpec] | None = None,
 ) -> str:
+    rpc_services = rpc_services or []
+    import_files = {s.proto_file for s in data_streams} | {
+        f
+        for s in rpc_services
+        for m in s.methods
+        for f in (m.input_proto_file, m.output_proto_file)
+    }
     imports = [
         {
             "package": ".".join(_module(f).split(".")[:-1]),
             "module": _module(f).split(".")[-1],
             "alias": _alias(f),
         }
-        for f in sorted({s.proto_file for s in data_streams})
+        for f in sorted(import_files)
     ]
     data = [_data_context(s) for s in data_streams]
     media = [_media_context(s) for s in media_streams]
+    rpc = [_rpc_context(s) for s in rpc_services]
+
+    # Re-exported message classes: data stream payloads + rpc method types.
+    message_exports = {(d["message"], f"{d['alias']}.{d['message']}") for d in data}
+    for r in rpc:
+        for m in r["methods"]:
+            message_exports.add((m["request"], m["request_ref"]))
+            message_exports.add((m["response"], m["response_ref"]))
+    exported_names = {n for n, _ in message_exports}
+    ambiguous = {
+        n for n in exported_names
+        if len({ref for name, ref in message_exports if name == n}) > 1
+    }
+    if ambiguous:
+        raise ValueError(
+            f"colliding message names across proto files: {sorted(ambiguous)}"
+        )
+
     all_names = sorted(
-        [s.message for s in data_streams]
-        + [d["class_name"] for d in data]
-        + [m["class_name"] for m in media]
-        + ["Proto4WebrtcProducer"]
+        exported_names
+        | {d["class_name"] for d in data}
+        | {m["class_name"] for m in media}
+        | {r["class_name"] for r in rpc}
+        | {"Proto4WebrtcProducer"}
     )
     return _env.get_template("producers.py.j2").render(
         imports=imports,
         data=data,
         media=media,
+        rpc=rpc,
+        messages=sorted(message_exports),
         all_names=repr(all_names),
     )

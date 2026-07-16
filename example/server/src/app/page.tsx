@@ -7,6 +7,7 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Container from "@mui/material/Container";
 import Paper from "@mui/material/Paper";
+import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
@@ -69,7 +70,11 @@ export default function Home() {
   const [values, setValues] = useState<number[]>([0, 0, 0, 0]);
   const [hz, setHz] = useState(0);
   const [robotOnline, setRobotOnline] = useState(false);
+  const [light, setLight] = useState(0);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [rpcError, setRpcError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const clientRef = useRef<StreamsClient | null>(null);
 
   const latestValues = useRef<number[]>([0, 0, 0, 0]);
   const msgTimes = useRef<number[]>([]);
@@ -90,6 +95,7 @@ export default function Home() {
         client.close();
         return;
       }
+      clientRef.current = client;
 
       // Covers the robot whether it connected before or after this page.
       client.subscribeToCameraStream((track) => {
@@ -119,9 +125,32 @@ export default function Home() {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      clientRef.current = null;
       client?.close();
     };
   }, []);
+
+  // Rpc calls travel browser -> robot over WebRTC data channels; the typed
+  // client.rpc.* methods are generated from the RovControl service.
+  const sendLight = async (intensity: number) => {
+    try {
+      const res = await clientRef.current?.rpc.setLight({ intensity });
+      if (res) setLight(res.intensity);
+      setRpcError(null);
+    } catch (err) {
+      setRpcError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const sendPing = async () => {
+    try {
+      const start = performance.now();
+      await clientRef.current?.rpc.ping({ stamp: Date.now() / 1000 });
+      setPingMs(performance.now() - start);
+      setRpcError(null);
+    } catch (err) {
+      setRpcError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const color =
     state === "connected"
@@ -189,6 +218,34 @@ export default function Home() {
             {values.slice(0, 4).map((v, i) => (
               <ThrusterBar key={i} index={i} value={v} />
             ))}
+          </Stack>
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+            <Typography variant="h6">Control (rpc)</Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              {rpcError && <Chip label={rpcError} color="error" size="small" />}
+              {pingMs !== null && (
+                <Chip label={`rtt ${pingMs.toFixed(1)} ms`} size="small" />
+              )}
+              <Button size="small" variant="outlined" onClick={sendPing}>
+                Ping
+              </Button>
+            </Stack>
+          </Box>
+          <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+            <Typography variant="caption" sx={{ whiteSpace: "nowrap" }}>
+              Light {Math.round(light * 100)}%
+            </Typography>
+            <Slider
+              value={light}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(_, v) => setLight(v as number)}
+              onChangeCommitted={(_, v) => void sendLight(v as number)}
+            />
           </Stack>
         </Paper>
       </Stack>

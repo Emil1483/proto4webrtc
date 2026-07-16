@@ -33,12 +33,14 @@ def run(request: plugin_pb2.CodeGeneratorRequest) -> plugin_pb2.CodeGeneratorRes
     )
     try:
         fdset = descriptor_pb2.FileDescriptorSet(file=request.proto_file)
-        data_streams, media_streams = extract_streams(
+        data_streams, media_streams, rpc_services = extract_streams(
             fdset, set(request.file_to_generate)
         )
         producers = response.file.add()
         producers.name = "proto4webrtc_gen/producers.py"
-        producers.content = render_producers(data_streams, media_streams)
+        producers.content = render_producers(
+            data_streams, media_streams, rpc_services
+        )
         init = response.file.add()
         init.name = "proto4webrtc_gen/__init__.py"
         init.content = INIT_CONTENT

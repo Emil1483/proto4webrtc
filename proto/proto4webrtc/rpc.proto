@@ -1,0 +1,36 @@
+// proto4webrtc: the wire envelopes for (proto4webrtc.rpc_service) calls.
+//
+// A request travels browser -> robot on the "<label>/requests" data channel,
+// the matching response robot -> browsers on "<label>/responses". Both
+// channels are reliable+ordered. The response channel is shared by every
+// connected browser, so responses carry the caller's client_id back and
+// clients drop envelopes that aren't theirs.
+//
+// These messages are internal plumbing: generated code encodes/decodes them,
+// applications only ever see the typed method input/output messages that ride
+// in `payload`.
+
+syntax = "proto3";
+
+package proto4webrtc;
+
+message RpcRequest {
+  // Random id the calling client picked for itself (unique enough per
+  // session); echoed back on the response so the caller can claim it.
+  string client_id = 1;
+  // Caller-local sequence number; (client_id, id) identifies one call.
+  uint64 id = 2;
+  // Method name as declared in the service, e.g. "SetSpeed".
+  string method = 3;
+  // The method's input message, binary protobuf.
+  bytes payload = 4;
+}
+
+message RpcResponse {
+  string client_id = 1;
+  uint64 id = 2;
+  // The method's output message, binary protobuf. Empty when error is set.
+  bytes payload = 3;
+  // Non-empty means the call failed; the client rejects with this message.
+  string error = 4;
+}

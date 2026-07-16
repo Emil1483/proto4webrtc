@@ -5,6 +5,7 @@ from proto4webrtc.runtime import (
     FrameTrack,
     MediaProducerBase,
     Proto4WebrtcClient,
+    RpcServiceBase,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "FrameTrack",
     "MediaProducerBase",
     "Proto4WebrtcClient",
+    "RpcServiceBase",
 ]

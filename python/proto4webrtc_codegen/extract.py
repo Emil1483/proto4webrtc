@@ -15,6 +15,7 @@ from proto4webrtc_codegen.naming import to_snake_case
 
 DATA_STREAM_EXT = "proto4webrtc.data_stream"
 MEDIA_STREAM_EXT = "proto4webrtc.media_stream"
+RPC_SERVICE_EXT = "proto4webrtc.rpc_service"
 
 
 @dataclass
@@ -43,6 +44,36 @@ class MediaStreamSpec(StreamSpec):
     video_codec: str  # proto4webrtc.VideoCodec value name
 
 
+@dataclass
+class RpcMethodSpec:
+    name: str  # method name as declared, e.g. "SetSpeed" — the wire id
+    input_full_name: str  # e.g. "example.SetSpeedRequest" (no leading dot)
+    input_proto_file: str
+    output_full_name: str
+    output_proto_file: str
+
+    @property
+    def input_message(self) -> str:
+        return self.input_full_name.rsplit(".", 1)[-1]
+
+    @property
+    def output_message(self) -> str:
+        return self.output_full_name.rsplit(".", 1)[-1]
+
+
+@dataclass
+class RpcServiceSpec:
+    proto_file: str
+    package: str
+    service: str  # e.g. "RobotControl"
+    label: str  # channel base: "<label>/requests", "<label>/responses"
+    methods: list[RpcMethodSpec]
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.package}.{self.service}" if self.package else self.service
+
+
 class ExtractError(Exception):
     pass
 
@@ -54,8 +85,8 @@ def _enum_name(pool, enum_type: str, number: int) -> str:
 def extract_streams(
     fdset: descriptor_pb2.FileDescriptorSet,
     files_to_generate: set[str],
-) -> tuple[list[DataStreamSpec], list[MediaStreamSpec]]:
-    """Return (data streams, media streams) declared in files_to_generate."""
+) -> tuple[list[DataStreamSpec], list[MediaStreamSpec], list[RpcServiceSpec]]:
+    """Return (data streams, media streams, rpc services) declared in files_to_generate."""
     pool = descriptor_pool.DescriptorPool()
     for fdp in fdset.file:  # --include_imports output is dependency-ordered
         pool.Add(fdp)
@@ -63,6 +94,7 @@ def extract_streams(
     try:
         data_ext = pool.FindExtensionByName(DATA_STREAM_EXT)
         media_ext = pool.FindExtensionByName(MEDIA_STREAM_EXT)
+        rpc_ext = pool.FindExtensionByName(RPC_SERVICE_EXT)
     except KeyError as exc:
         raise ExtractError(
             "proto4webrtc/options.proto missing from descriptor set "
@@ -72,9 +104,13 @@ def extract_streams(
     options_cls = message_factory.GetMessageClass(
         pool.FindMessageTypeByName("google.protobuf.MessageOptions")
     )
+    service_options_cls = message_factory.GetMessageClass(
+        pool.FindMessageTypeByName("google.protobuf.ServiceOptions")
+    )
 
     data_streams: list[DataStreamSpec] = []
     media_streams: list[MediaStreamSpec] = []
+    rpc_services: list[RpcServiceSpec] = []
 
     for fdp in fdset.file:
         if fdp.name not in files_to_generate:
@@ -135,17 +171,77 @@ def extract_streams(
                     )
                 )
 
-    labels = [s.label for s in data_streams + media_streams]
+    for fdp in fdset.file:
+        if fdp.name not in files_to_generate:
+            continue
+        for svc in fdp.service:
+            opts = service_options_cls()
+            opts.ParseFromString(svc.options.SerializeToString())
+            if not opts.HasExtension(rpc_ext):
+                continue  # plain (e.g. grpc-only) service; not ours
+            o = opts.Extensions[rpc_ext]
+            if not o.label:
+                raise ExtractError(
+                    f"{fdp.name}: {svc.name} rpc_service needs a label"
+                )
+            methods: list[RpcMethodSpec] = []
+            for m in svc.method:
+                if m.client_streaming or m.server_streaming:
+                    raise ExtractError(
+                        f"{fdp.name}: {svc.name}.{m.name} is streaming; "
+                        "rpc_service supports unary methods only"
+                    )
+                input_full = m.input_type.lstrip(".")
+                output_full = m.output_type.lstrip(".")
+                methods.append(
+                    RpcMethodSpec(
+                        name=m.name,
+                        input_full_name=input_full,
+                        input_proto_file=pool.FindMessageTypeByName(
+                            input_full
+                        ).file.name,
+                        output_full_name=output_full,
+                        output_proto_file=pool.FindMessageTypeByName(
+                            output_full
+                        ).file.name,
+                    )
+                )
+            if not methods:
+                raise ExtractError(
+                    f"{fdp.name}: {svc.name} rpc_service declares no methods"
+                )
+            method_names = [m.name for m in methods]
+            method_dupes = {n for n in method_names if method_names.count(n) > 1}
+            if method_dupes:
+                raise ExtractError(
+                    f"{fdp.name}: {svc.name} duplicate method names: "
+                    f"{sorted(method_dupes)}"
+                )
+            rpc_services.append(
+                RpcServiceSpec(
+                    proto_file=fdp.name,
+                    package=fdp.package,
+                    service=svc.name,
+                    label=o.label,
+                    methods=methods,
+                )
+            )
+
+    # rpc services occupy "<label>/requests" and "<label>/responses"; keep the
+    # whole namespace collision-free by checking base labels together.
+    labels = [s.label for s in data_streams + media_streams + rpc_services]
     dupes = {l for l in labels if labels.count(l) > 1}
     if dupes:
         raise ExtractError(f"duplicate stream labels: {sorted(dupes)}")
 
-    attrs = [to_snake_case(s.message) for s in data_streams + media_streams]
+    attrs = [to_snake_case(s.message) for s in data_streams + media_streams] + [
+        to_snake_case(s.service) for s in rpc_services
+    ]
     attr_dupes = {a for a in attrs if attrs.count(a) > 1}
     if attr_dupes:
         raise ExtractError(
             f"duplicate Proto4WebrtcProducer attribute names: {sorted(attr_dupes)} "
-            "(derived from message name; rename one of the colliding messages)"
+            "(derived from message/service name; rename one of the colliding ones)"
         )
 
-    return data_streams, media_streams
+    return data_streams, media_streams, rpc_services

@@ -16,8 +16,14 @@
 //     client.onProducerClosed(() => { ... });
 //     client.close();
 
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Device } from "mediasoup-client";
 import type { types } from "mediasoup-client";
+
+import {
+  RpcRequestSchema,
+  RpcResponseSchema,
+} from "./gen/proto4webrtc/rpc_pb.js";
 
 export interface Proto4WebrtcClientOptions {
   /** Signaling WebSocket URL. Default: ws(s)://<location.host>/api/sfu */
@@ -186,6 +192,138 @@ export class Proto4WebrtcClient {
     );
   }
 
+  // --- rpc ------------------------------------------------------------------
+
+  private clientId = Math.random().toString(36).slice(2, 12);
+  private nextRpcId = 1n;
+  private rpcPending = new Map<
+    bigint,
+    {
+      resolve: (payload: Uint8Array) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  private sendTransportPromise?: Promise<types.Transport>;
+  private requestProducers = new Map<string, Promise<types.DataProducer>>();
+  private rpcSubscribed = new Set<string>();
+
+  /**
+   * One unary rpc call, raw payload in/out — the generated typed
+   * client.rpc.<method>() wrappers call this. Sends a proto4webrtc.RpcRequest
+   * on "<label>/requests" (produced lazily, once per service) and resolves
+   * with the matching RpcResponse payload from "<label>/responses".
+   */
+  async callRpc(
+    label: string,
+    method: string,
+    payload: Uint8Array,
+    options?: { timeoutMs?: number },
+  ): Promise<Uint8Array> {
+    this.subscribeRpcResponses(label);
+    const producer = await this.getRequestProducer(label);
+    const id = this.nextRpcId++;
+    const bytes = toBinary(
+      RpcRequestSchema,
+      create(RpcRequestSchema, {
+        clientId: this.clientId,
+        id,
+        method,
+        payload,
+      }),
+    );
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const timeoutMs = options?.timeoutMs ?? 10_000;
+      const timer = setTimeout(() => {
+        this.rpcPending.delete(id);
+        reject(new Error(`rpc ${method} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.rpcPending.set(id, { resolve, reject, timer });
+      try {
+        producer.send(bytes);
+      } catch (err) {
+        clearTimeout(timer);
+        this.rpcPending.delete(id);
+        throw err;
+      }
+    });
+  }
+
+  private subscribeRpcResponses(label: string): void {
+    if (this.rpcSubscribed.has(label)) return;
+    this.rpcSubscribed.add(label);
+    this.subscribe(`${label}/responses`, (data) => {
+      const res = fromBinary(RpcResponseSchema, data);
+      if (res.clientId !== this.clientId) return; // some other browser's call
+      const pending = this.rpcPending.get(res.id);
+      if (!pending) return;
+      this.rpcPending.delete(res.id);
+      clearTimeout(pending.timer);
+      if (res.error) pending.reject(new Error(res.error));
+      else pending.resolve(res.payload);
+    });
+  }
+
+  private getRequestProducer(label: string): Promise<types.DataProducer> {
+    let producer = this.requestProducers.get(label);
+    if (!producer) {
+      producer = (async () => {
+        const transport = await this.getSendTransport();
+        const dataProducer = await transport.produceData({
+          label: `${label}/requests`,
+          ordered: true,
+        });
+        if (dataProducer.readyState !== "open") {
+          await new Promise<void>((resolve, reject) => {
+            dataProducer.on("open", resolve);
+            dataProducer.on("close", () =>
+              reject(new Error("request channel closed before opening")),
+            );
+          });
+        }
+        return dataProducer;
+      })();
+      this.requestProducers.set(label, producer);
+      producer.catch(() => this.requestProducers.delete(label));
+    }
+    return producer;
+  }
+
+  private getSendTransport(): Promise<types.Transport> {
+    if (!this.sendTransportPromise) {
+      this.sendTransportPromise = (async () => {
+        const params = await this.request<
+          types.TransportOptions & { iceServers?: RTCIceServer[] }
+        >("createTransport", { direction: "send" });
+        const transport = this.device.createSendTransport(params);
+        transport.on("connect", ({ dtlsParameters }, cb, errback) => {
+          this.request("connectTransport", {
+            transportId: transport.id,
+            dtlsParameters,
+          })
+            .then(() => cb())
+            .catch(errback);
+        });
+        transport.on(
+          "producedata",
+          ({ sctpStreamParameters, label, protocol, appData }, cb, errback) => {
+            this.request<{ id: string }>("produceData", {
+              transportId: transport.id,
+              sctpStreamParameters,
+              label,
+              protocol,
+              appData: appData ?? {},
+            })
+              .then(({ id }) => cb({ id }))
+              .catch(errback);
+          },
+        );
+        return transport;
+      })();
+    }
+    return this.sendTransportPromise;
+  }
+
   /** Fires whenever any producer or data producer goes away. */
   onProducerClosed(cb: () => void): () => void {
     const handler = (msg: Envelope) => {
@@ -197,6 +335,12 @@ export class Proto4WebrtcClient {
   }
 
   close(): void {
+    for (const pending of this.rpcPending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("client closed"));
+    }
+    this.rpcPending.clear();
+    void this.sendTransportPromise?.then((t) => t.close()).catch(() => {});
     this.recvTransport?.close();
     this.ws.close();
   }

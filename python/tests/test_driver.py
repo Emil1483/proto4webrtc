@@ -22,11 +22,21 @@ def test_generate_does_not_write_a_proto4webrtc_directory(tmp_path):
 
     assert not (tmp_path / "proto4webrtc").exists()
     assert (tmp_path / "proto4webrtc_gen" / "producers.py").exists()
-    assert (tmp_path / "example" / "streams_pb2.py").exists()
+    assert (tmp_path / "rov" / "streams" / "thrusters_pb2.py").exists()
 
 
 def test_generated_streams_module_imports_options_from_the_real_runtime_package(tmp_path):
     generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
 
-    source = (tmp_path / "example" / "streams_pb2.py").read_text()
+    source = (tmp_path / "rov" / "streams" / "thrusters_pb2.py").read_text()
     assert "from proto4webrtc import options_pb2" in source
+
+
+def test_generated_producers_include_rpc_service_base(tmp_path):
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    assert "class RovControlBase(RpcServiceBase):" in source
+    assert '"SetLight": ("set_light", SetLightRequest)' in source
+    assert "async def set_light(self, request: SetLightRequest)" in source
+    assert "rov_control: RovControlBase" in source

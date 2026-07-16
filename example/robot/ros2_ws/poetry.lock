@@ -716,15 +716,13 @@ files = [
 
 [[package]]
 name = "proto4webrtc"
-version = "0.2.1"
+version = "1.0.0"
 description = "Generate mediasoup producer code (pymediasoup) from proto4webrtc-annotated protofiles"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-files = [
-    {file = "proto4webrtc-0.2.1-py3-none-any.whl", hash = "sha256:d1fd8475d8f14dad81235b8864853fac5b85ba2a7118dbdc8b1ae1c6da884f02"},
-    {file = "proto4webrtc-0.2.1.tar.gz", hash = "sha256:b0adc3d7e14ca30f6d6501cadc208c8b2c583402e8d42b9b4020ae34a178a0fa"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 aiortc = ">=1.14"
@@ -738,6 +736,10 @@ websockets = ">=16"
 
 [package.extras]
 test = ["pytest (>=8)", "pytest-asyncio (>=0.24)"]
+
+[package.source]
+type = "directory"
+url = "../../../python"
 
 [[package]]
 name = "protobuf"
@@ -1178,4 +1180,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4"
-content-hash = "148c515664577952689488e261adfdea4bebdb2c54401e0d8110d19801852125"
+content-hash = "d691700061ac771f040cdf22225c36f8f6b48b3ab5a05b0bab3411ebdf8726ea"

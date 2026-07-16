@@ -22,7 +22,9 @@ from av import VideoFrame
 from pymediasoup import AiortcHandler, Device
 from pymediasoup.models.transport import DtlsParameters, IceCandidate, IceParameters
 from pymediasoup.rtp_parameters import RtpCapabilities
-from pymediasoup.sctp_parameters import SctpParameters
+from pymediasoup.sctp_parameters import SctpParameters, SctpStreamParameters
+
+from proto4webrtc.rpc_pb2 import RpcRequest, RpcResponse
 
 try:
     import numpy as np
@@ -167,6 +169,59 @@ class MediaProducerBase:
         self._track.push(frame)
 
 
+class RpcServiceBase:
+    """Base for generated RPC service classes; the robot subclasses those.
+
+    Wire model — two data channels per service, both reliable+ordered:
+      - "<LABEL>/requests":  one per connected browser, consumed here
+      - "<LABEL>/responses": produced here, shared; clients filter by client_id
+
+    Generated subclasses fill LABEL, _METHODS and one async method stub per
+    rpc; the implementation overrides those stubs. Handlers run on the
+    client's event loop — offload blocking work with asyncio.to_thread().
+    """
+
+    LABEL: str
+    # wire method name -> (python method attr, request message class)
+    _METHODS: dict
+
+    def __init__(self):
+        self._response_dp = None
+
+    @property
+    def _request_label(self) -> str:
+        return f"{self.LABEL}/requests"
+
+    async def _attach(self, transport) -> None:
+        self._response_dp = await transport.produceData(
+            label=f"{self.LABEL}/responses"
+        )
+
+    def _detach(self) -> None:
+        self._response_dp = None
+
+    async def _handle_request(self, data: bytes, logger) -> None:
+        try:
+            req = RpcRequest.FromString(bytes(data))
+        except Exception:
+            logger.warning(f"{self.LABEL}: undecodable rpc request dropped")
+            return
+        resp = RpcResponse(client_id=req.client_id, id=req.id)
+        try:
+            entry = self._METHODS.get(req.method)
+            if entry is None:
+                raise ValueError(f"unknown method: {req.method}")
+            attr, request_cls = entry
+            result = await getattr(self, attr)(request_cls.FromString(req.payload))
+            resp.payload = result.SerializeToString()
+        except Exception as exc:  # any handler failure -> error response
+            resp.error = str(exc) or type(exc).__name__
+            logger.warning(f"{self.LABEL}.{req.method} failed: {resp.error}")
+        dp = self._response_dp
+        if dp is not None and dp.readyState == "open":
+            dp.send(resp.SerializeToString())
+
+
 class Proto4WebrtcClient:
     """Base class for the generated Proto4WebrtcProducer.
 
@@ -190,10 +245,12 @@ class Proto4WebrtcClient:
         self._tracks: list[FrameTrack] = []
         self._data_producers: list[DataProducerBase] = []
         self._media_producers: list[MediaProducerBase] = []
+        self._rpc_services: list[RpcServiceBase] = []
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws = None
         self._pending: dict[int, asyncio.Future] = {}
+        self._event_handlers: list = []
         self._next_id = 1
         self._stop_event: asyncio.Event | None = None
 
@@ -257,13 +314,18 @@ class Proto4WebrtcClient:
                     fut.set_result(msg.get("data"))
                 else:
                     fut.set_exception(RuntimeError(msg.get("error", "rpc error")))
-            # server events (newProducer, etc.) are irrelevant to a producer
+            elif msg.get("event"):
+                # server events; rpc services watch for browsers' request channels
+                for handler in list(self._event_handlers):
+                    handler(msg)
 
     # --- asyncio / mediasoup -------------------------------------------------
 
     async def _connect_once(self) -> None:
         self._pending = {}
         transport = None
+        recv_transport = None
+        rpc_event_handler = None
 
         async with websockets.connect(self.signaling_url) as ws:
             self._ws = ws
@@ -335,6 +397,12 @@ class Proto4WebrtcClient:
                     await dp._attach(transport)
                 for mp in self._media_producers:
                     await mp._attach(transport)
+                for svc in self._rpc_services:
+                    await svc._attach(transport)
+                if self._rpc_services:
+                    recv_transport, rpc_event_handler = await self._serve_rpc(
+                        device
+                    )
                 self._logger.info("producing")
 
                 await reader_task  # returns when the socket closes
@@ -344,6 +412,89 @@ class Proto4WebrtcClient:
                     dp._detach()
                 for mp in self._media_producers:
                     mp._detach()
+                for svc in self._rpc_services:
+                    svc._detach()
+                if rpc_event_handler is not None:
+                    self._event_handlers.remove(rpc_event_handler)
                 self._ws = None
                 if transport is not None:
                     await transport.close()
+                if recv_transport is not None:
+                    await recv_transport.close()
+
+    async def _serve_rpc(self, device):
+        """Consume every browser's "<label>/requests" channel (current and
+        future) on a receive transport, dispatching into the rpc services."""
+        params = await self.rpc("createTransport", {"direction": "recv"})
+        recv_transport = device.createRecvTransport(
+            id=params["id"],
+            iceParameters=IceParameters(**params["iceParameters"]),
+            iceCandidates=[IceCandidate(**c) for c in params["iceCandidates"]],
+            dtlsParameters=DtlsParameters(**params["dtlsParameters"]),
+            sctpParameters=(
+                SctpParameters(**params["sctpParameters"])
+                if params.get("sctpParameters")
+                else None
+            ),
+        )
+
+        @recv_transport.on("connect")
+        async def on_connect(dtlsParameters):
+            await self.rpc(
+                "connectTransport",
+                {
+                    "transportId": recv_transport.id,
+                    "dtlsParameters": _dump(dtlsParameters),
+                },
+            )
+
+        by_label = {svc._request_label: svc for svc in self._rpc_services}
+        seen: set[str] = set()
+
+        async def consume(data_producer_id: str, svc: RpcServiceBase) -> None:
+            if data_producer_id in seen:
+                return
+            seen.add(data_producer_id)
+            try:
+                p = await self.rpc(
+                    "consumeData",
+                    {
+                        "transportId": recv_transport.id,
+                        "dataProducerId": data_producer_id,
+                    },
+                )
+                consumer = await recv_transport.consumeData(
+                    id=p["id"],
+                    dataProducerId=p["dataProducerId"],
+                    sctpStreamParameters=SctpStreamParameters(
+                        **p["sctpStreamParameters"]
+                    ),
+                    label=p.get("label"),
+                    protocol=p.get("protocol"),
+                )
+            except Exception as exc:
+                self._logger.warning(f"rpc consumeData failed: {exc}")
+                return
+            consumer.on(
+                "message",
+                lambda data: asyncio.ensure_future(
+                    svc._handle_request(data, self._logger)
+                ),
+            )
+
+        def on_event(msg: dict) -> None:
+            if msg.get("event") != "newDataProducer":
+                return
+            svc = by_label.get(msg.get("label"))
+            if svc is not None:
+                asyncio.ensure_future(consume(msg["dataProducerId"], svc))
+
+        self._event_handlers.append(on_event)
+
+        existing = await self.rpc("getProducers")
+        for dp in existing.get("dataProducers", []):
+            svc = by_label.get(dp.get("label"))
+            if svc is not None:
+                await consume(dp["dataProducerId"], svc)
+
+        return recv_transport, on_event

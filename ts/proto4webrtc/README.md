@@ -111,4 +111,11 @@ client.close();
 any that (re)appears later, and create consumers only for what was asked —
 the SFU never sends this peer unrequested streams.
 
+Rpc (services annotated `(proto4webrtc.rpc_service)`): the generated
+`client.rpc.<method>()` wrappers are the intended surface; underneath sits
+`client.callRpc(label, method, payload)` — it lazily creates a send
+transport, produces the service's `"<label>/requests"` data channel, and
+matches responses from `"<label>/responses"` by client id (10 s default
+timeout, per-call override).
+
 Full docs: https://github.com/Emil1483/proto4webrtc

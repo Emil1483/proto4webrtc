@@ -73,7 +73,29 @@ message MediaStreamOptions {
   VideoCodec video_codec = 3;
 }
 
+// A service annotated with (proto4webrtc.rpc_service) becomes a typed RPC
+// bridge between the browser and the robot, carried over two SCTP data
+// channels per service (both reliable+ordered):
+//   - "<label>/requests":  browser -> robot (each browser produces its own)
+//   - "<label>/responses": robot -> browsers (one, shared; clients filter
+//     by the client_id they stamped on the request)
+// Requests and responses travel inside the proto4webrtc.RpcRequest /
+// RpcResponse envelopes (proto4webrtc/rpc.proto), payloads being the
+// method's input/output messages as binary protobuf.
+//   - Python:     an abstract service class the robot implements
+//   - TypeScript: typed client methods, client.rpc.someCall(request)
+message RpcServiceOptions {
+  // Base channel label. Must be unique across all streams and services in
+  // the compiled set; "<label>/requests" and "<label>/responses" are derived
+  // from it.
+  string label = 1;
+}
+
 extend google.protobuf.MessageOptions {
   DataStreamOptions data_stream = 50000;
   MediaStreamOptions media_stream = 50001;
+}
+
+extend google.protobuf.ServiceOptions {
+  RpcServiceOptions rpc_service = 50000;
 }

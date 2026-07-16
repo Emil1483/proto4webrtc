@@ -1,0 +1,33 @@
+// Rpc service the browser calls on the robot over WebRTC data channels.
+
+syntax = "proto3";
+
+package rov.rpc;
+
+import "proto4webrtc/options.proto";
+
+message SetLightRequest {
+  // 0..1
+  float intensity = 1;
+}
+
+message SetLightResponse {
+  // The intensity actually applied (clamped).
+  float intensity = 1;
+}
+
+message PingRequest {
+  double stamp = 1;
+}
+
+message PingResponse {
+  // Echoed request stamp, for round-trip timing.
+  double stamp = 1;
+}
+
+service RovControl {
+  option (proto4webrtc.rpc_service) = {label: "rov_control"};
+
+  rpc SetLight(SetLightRequest) returns (SetLightResponse);
+  rpc Ping(PingRequest) returns (PingResponse);
+}

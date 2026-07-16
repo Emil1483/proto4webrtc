@@ -105,13 +105,17 @@ def generate(proto_dirs, out_dir) -> list[Path]:
                 init.write_text("")
                 written.append(init)
 
-    data_streams, media_streams = extract_streams(fdset, set(proto_files))
+    data_streams, media_streams, rpc_services = extract_streams(
+        fdset, set(proto_files)
+    )
 
     gen_dir = out_dir / GEN_PACKAGE
     gen_dir.mkdir(exist_ok=True)
     (gen_dir / "__init__.py").write_text(INIT_CONTENT)
     producers = gen_dir / "producers.py"
-    producers.write_text(render_producers(data_streams, media_streams))
+    producers.write_text(
+        render_producers(data_streams, media_streams, rpc_services)
+    )
     written += [gen_dir / "__init__.py", producers]
 
     return written

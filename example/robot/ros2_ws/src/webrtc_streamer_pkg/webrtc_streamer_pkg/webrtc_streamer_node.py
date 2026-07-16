@@ -31,10 +31,37 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud2
 from my_interfaces.msg import Thrusters as RosThrusters
 
-from proto4webrtc_gen import PointCloud, Proto4WebrtcProducer, Thrusters
+from proto4webrtc_gen import (
+    PingRequest,
+    PingResponse,
+    PointCloud,
+    Proto4WebrtcProducer,
+    RovControlBase,
+    SetLightRequest,
+    SetLightResponse,
+    Thrusters,
+)
 from rov.streams.pointcloud_pb2 import XYZ_F32
 
 DEFAULT_SIGNALING_URL = "ws://localhost:3000/api/sfu"
+
+
+class RovControl(RovControlBase):
+    """The browser's rpc calls land here (on the producer's asyncio loop)."""
+
+    def __init__(self, node: Node):
+        super().__init__()
+        self._node = node
+        self._light = 0.0
+
+    async def set_light(self, request: SetLightRequest) -> SetLightResponse:
+        self._light = min(max(request.intensity, 0.0), 1.0)
+        self._node.get_logger().info(f"light -> {self._light:.2f}")
+        return SetLightResponse(intensity=self._light)
+
+    async def ping(self, request: PingRequest) -> PingResponse:
+        self._node.get_logger().info(f"ping {request.stamp}")
+        return PingResponse(stamp=request.stamp)
 
 
 class WebRtcStreamerNode(Node):
@@ -45,7 +72,9 @@ class WebRtcStreamerNode(Node):
             self.get_parameter("signaling_url").get_parameter_value().string_value
         )
         self.client = Proto4WebrtcProducer(
-            signaling_url=signaling_url, logger=self.get_logger()
+            signaling_url=signaling_url,
+            rov_control=RovControl(self),
+            logger=self.get_logger(),
         )
 
         self.create_subscription(Image, "camera/image_raw", self.on_image, 10)

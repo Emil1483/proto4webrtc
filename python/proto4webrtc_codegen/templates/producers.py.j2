@@ -6,16 +6,29 @@ Mediasoup producer wrappers for the streams declared in the protofiles:
     client.run_forever()          # blocking; e.g. from a ROS run handler
     client.<stream>.send(...)     # data streams, any thread, anytime
     client.<stream>.push(frame)   # media streams, any thread, anytime
+{% if rpc %}
+
+Rpc services: subclass the generated base, implement its methods, and pass an
+instance to Proto4WebrtcProducer — calls from browsers are dispatched into it:
+
+    class My{{ rpc[0].service }}({{ rpc[0].class_name }}):
+        async def {{ rpc[0].methods[0].attr }}(self, request):
+            return ...
+
+    client = Proto4WebrtcProducer(
+        signaling_url=..., {{ rpc[0].attr }}=My{{ rpc[0].service }}()
+    )
+{% endif %}
 """
 
-from proto4webrtc.runtime import DataProducerBase, FrameTrack, MediaProducerBase, Proto4WebrtcClient
+from proto4webrtc.runtime import DataProducerBase, FrameTrack, MediaProducerBase, Proto4WebrtcClient, RpcServiceBase
 
 {% for imp in imports %}
 from {{ imp.package }} import {{ imp.module }} as {{ imp.alias }}
 {% endfor %}
 
-{% for s in data %}
-{{ s.message }} = {{ s.alias }}.{{ s.message }}
+{% for name, ref in messages %}
+{{ name }} = {{ ref }}
 {% endfor %}
 
 
@@ -52,14 +65,36 @@ class {{ s.class_name }}(MediaProducerBase):
 
 
 {% endfor %}
+{% for s in rpc %}
+class {{ s.class_name }}(RpcServiceBase):
+    """Rpc service "{{ s.label }}" ({{ s.full_name }}).
+
+    Subclass and implement the methods; handlers run on the client's event
+    loop — offload blocking work with asyncio.to_thread().
+    """
+
+    LABEL = "{{ s.label }}"
+    _METHODS = {
+{% for m in s.methods %}
+        "{{ m.wire_name }}": ("{{ m.attr }}", {{ m.request }}),
+{% endfor %}
+    }
+
+{% for m in s.methods %}
+    async def {{ m.attr }}(self, request: {{ m.request }}) -> {{ m.response }}:
+        raise NotImplementedError("{{ s.service }}.{{ m.attr }}")
+
+{% endfor %}
+
+{% endfor %}
 class Proto4WebrtcProducer(Proto4WebrtcClient):
-    """Aggregate client: one attribute per declared stream.
+    """Aggregate client: one attribute per declared stream{{ " and rpc service" if rpc }}.
 
     client = Proto4WebrtcProducer(signaling_url="ws://localhost:3000/api/sfu")
     client.run_forever()  # blocking; call from a background thread or your run handler
     """
 
-    def __init__(self, signaling_url: str, reconnect_delay: float = 3.0, logger=None):
+    def __init__(self, signaling_url: str, {% for s in rpc %}{{ s.attr }}: {{ s.class_name }}, {% endfor %}reconnect_delay: float = 3.0, logger=None):
         super().__init__(signaling_url, reconnect_delay=reconnect_delay, logger=logger)
 {% for s in media %}
         self.{{ s.track_attr }} = FrameTrack(kind="{{ s.kind }}", clock_rate={{ s.clock_rate }})
@@ -70,9 +105,13 @@ class Proto4WebrtcProducer(Proto4WebrtcClient):
 {% for s in media %}
         self.{{ s.attr }} = {{ s.class_name }}(self, self.{{ s.track_attr }})
 {% endfor %}
+{% for s in rpc %}
+        self.{{ s.attr }} = {{ s.attr }}
+{% endfor %}
         self._tracks = [{% for s in media %}self.{{ s.track_attr }}{{ ", " if not loop.last }}{% endfor %}]
         self._data_producers = [{% for s in data %}self.{{ s.attr }}{{ ", " if not loop.last }}{% endfor %}]
         self._media_producers = [{% for s in media %}self.{{ s.attr }}{{ ", " if not loop.last }}{% endfor %}]
+        self._rpc_services = [{% for s in rpc %}self.{{ s.attr }}{{ ", " if not loop.last }}{% endfor %}]
 
 
 __all__ = {{ all_names }}

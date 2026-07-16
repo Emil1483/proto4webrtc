@@ -47,6 +47,8 @@ DATA_STREAM_FIELD_NUMBER: _ClassVar[int]
 data_stream: _descriptor.FieldDescriptor
 MEDIA_STREAM_FIELD_NUMBER: _ClassVar[int]
 media_stream: _descriptor.FieldDescriptor
+RPC_SERVICE_FIELD_NUMBER: _ClassVar[int]
+rpc_service: _descriptor.FieldDescriptor
 
 class DataStreamOptions(_message.Message):
     __slots__ = ("label", "delivery", "backpressure", "max_buffered_factor")
@@ -69,3 +71,9 @@ class MediaStreamOptions(_message.Message):
     kind: MediaKind
     video_codec: VideoCodec
     def __init__(self, label: _Optional[str] = ..., kind: _Optional[_Union[MediaKind, str]] = ..., video_codec: _Optional[_Union[VideoCodec, str]] = ...) -> None: ...
+
+class RpcServiceOptions(_message.Message):
+    __slots__ = ("label",)
+    LABEL_FIELD_NUMBER: _ClassVar[int]
+    label: str
+    def __init__(self, label: _Optional[str] = ...) -> None: ...

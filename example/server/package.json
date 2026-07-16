@@ -18,7 +18,7 @@
     "@mui/material": "^9.2.0",
     "next": "16.2.9",
     "next-ws": "^2.2.8",
-    "proto4webrtc": "^0.4.2",
+    "proto4webrtc": "file:../../ts/proto4webrtc",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "ws": "^8.21.0"
@@ -33,7 +33,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^10.6.0",
     "eslint-config-next": "16.2.9",
-    "protoc-gen-proto4webrtc-ts": "^0.4.2",
+    "protoc-gen-proto4webrtc-ts": "file:../../ts",
     "typescript": "^6.0.3"
   }
 }

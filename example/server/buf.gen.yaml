@@ -4,12 +4,15 @@
 # consumer wrappers on top as src/gen/proto4webrtc.ts.
 #
 # The codegen script passes --include-imports so proto4webrtc/options_pb.ts
-# (a BSR dep, not a workspace file) is generated too — the stream _pb.ts
-# files import it.
+# is generated too — the stream _pb.ts files import it.
+#
+# Input is the repo root workspace so proto4webrtc/options.proto resolves to
+# the local proto/ module (the code as it stands, not the published BSR
+# commit).
 version: v2
 clean: true
 inputs:
-  - directory: ..
+  - directory: ../..
 plugins:
   - local: protoc-gen-es
     out: src/gen

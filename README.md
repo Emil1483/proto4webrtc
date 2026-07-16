@@ -44,6 +44,18 @@ message Camera {
     video_codec: VP8
   };
 }
+
+// Typed rpc from the browser to the robot, over WebRTC data channels
+// ("<label>/requests" browser->robot, "<label>/responses" robot->browsers).
+// Unary methods only.
+message PingRequest { double stamp = 1; }
+message PingResponse { double stamp = 1; }
+
+service Control {
+  option (proto4webrtc.rpc_service) = {label: "control"};
+
+  rpc Ping(PingRequest) returns (PingResponse);
+}
 ```
 
 For editor/lint support while designing, depend on the options module:
@@ -141,6 +153,21 @@ client.telemetry.send(Telemetry(stamp=time.time(), value0=0.4, value1=-0.2))
 client.camera.push(frame)  # av.VideoFrame/AudioFrame, or a numpy ndarray (rgb24)
 ```
 
+Rpc services: subclass the generated abstract base, implement its `async`
+methods (they run on the client's event loop — offload blocking work with
+`asyncio.to_thread()`), and hand an instance to the producer; browser calls
+are dispatched into it, exceptions travel back as rpc errors:
+
+```python
+from proto4webrtc_gen import ControlBase, PingResponse
+
+class Control(ControlBase):
+    async def ping(self, request):
+        return PingResponse(stamp=request.stamp)
+
+client = Proto4WebrtcProducer(signaling_url=..., control=Control())
+```
+
 Delivery and backpressure declared in the protofile are baked into each
 stream's `send()`: it encodes, checks the channel state, and (for
 `DROP_IF_BUFFERED`) drops the message instead of queueing lag — returning
@@ -169,6 +196,16 @@ client.subscribeToCameraStream((track) => {
 });
 client.onProducerClosed(() => { /* robot went away */ });
 client.close();
+```
+
+Rpc services surface as typed methods on `client.rpc` (every annotated
+service's methods, camelCased, merged onto one object). Requests take the
+protobuf-es init shape; failures (handler exception on the robot, or a
+timeout — default 10 s) reject the promise:
+
+```ts
+const res = await client.rpc.ping({ stamp: Date.now() / 1000 });
+await client.rpc.setLight({ intensity: 0.5 }, { timeoutMs: 3000 });
 ```
 
 Each subscribe covers the producer already online at call time and any that
@@ -223,6 +260,7 @@ endpoint with real `mediasoup-client`.
 | `max_buffered_factor` | data | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2) |
 | `kind` | media | `VIDEO` or `AUDIO` |
 | `video_codec` | media | `VP8`, `VP9`, `H264`, or unset for router default |
+| `label` (rpc) | service | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
 
 The plugins never read `options.proto` at generation time — protoc compiles
 annotations into the descriptors it hands them. The file only matters when
@@ -246,16 +284,21 @@ the other.
 pip install -e python
 python -m proto4webrtc_codegen --proto example/proto --out example/gen-py
 
-# Python: only after changing proto4webrtc/options.proto — refresh the copy
-# bundled inside the runtime package (python/proto4webrtc/options_pb2.py)
+# Only after changing proto/proto4webrtc/*.proto — sync the copies bundled in
+# the codegen package and refresh the runtimes' checked-in compiled modules
+# (python/proto4webrtc/{options,rpc}_pb2.py and
+# ts/proto4webrtc/src/gen/proto4webrtc/rpc_pb.ts)
+cp proto/proto4webrtc/*.proto python/proto4webrtc_codegen/proto/proto4webrtc/
 python -c "
 from grpc_tools import protoc
 from importlib import resources
 protoc.main(['protoc', '-Ipython/proto4webrtc_codegen/proto',
              '-I' + str(resources.files('grpc_tools') / '_proto'),
              '--python_out=python', '--pyi_out=python',
-             'proto4webrtc/options.proto'])
+             'proto4webrtc/options.proto', 'proto4webrtc/rpc.proto'])
 "
+ts/node_modules/.bin/buf generate --path proto/proto4webrtc/rpc.proto \
+  --template '{"version":"v2","inputs":[{"directory":"proto"}],"plugins":[{"local":"ts/node_modules/.bin/protoc-gen-es","out":"ts/proto4webrtc/src/gen","opt":["target=ts"]}]}'
 
 # TypeScript codegen plugin: deps + generate from the example protos
 npm --prefix ts install
