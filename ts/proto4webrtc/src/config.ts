@@ -1,6 +1,21 @@
-// Default mediasoup Worker/Router/WebRtcTransport settings, ported from
-// web-rtc-test/server's config.ts minus its env-var reading (an app
-// concern — this library takes final resolved values).
+// Default mediasoup Worker/Router/WebRtcTransport settings.
+//
+// The defaults are env-driven so `new Proto4WebrtcSfu()` works out of the
+// box, locally and deployed, without any code-level config:
+//
+//   MEDIASOUP_LISTEN_IP      bind address (default 0.0.0.0)
+//   MEDIASOUP_ANNOUNCED_IP   public address peers connect to (falls back to
+//                            PUBLIC_IP, then to the machine's first
+//                            non-internal IPv4, auto-detected)
+//   MEDIASOUP_RTC_MIN_PORT   RTC UDP/TCP port range start (default 40000)
+//   MEDIASOUP_RTC_MAX_PORT   RTC UDP/TCP port range end   (default 40049)
+//   TURN_URLS                comma-separated TURN urls appended to the STUN
+//                            default, e.g. "turn:1.2.3.4:3478?transport=udp"
+//   TURN_USERNAME            TURN username
+//   TURN_CREDENTIAL          TURN password
+//
+// Explicit Proto4WebrtcSfuConfig values override the env-derived defaults
+// per top-level section.
 
 import os from "node:os";
 
@@ -25,52 +40,69 @@ export interface Proto4WebrtcSfuConfig {
   iceServers?: IceServer[];
 }
 
-const RTC_MIN_PORT = 40000;
-const RTC_MAX_PORT = 40049;
+// Exported for tests; apps normally rely on the module-level `defaultConfig`
+// built from process.env at import time.
+export function buildDefaultConfig(
+  env: Record<string, string | undefined>,
+): Required<Proto4WebrtcSfuConfig> {
+  const listenIp = env.MEDIASOUP_LISTEN_IP ?? "0.0.0.0";
+  const announcedAddress =
+    env.MEDIASOUP_ANNOUNCED_IP ?? env.PUBLIC_IP ?? undefined;
+  const rtcMinPort = Number(env.MEDIASOUP_RTC_MIN_PORT ?? 40000);
+  const rtcMaxPort = Number(env.MEDIASOUP_RTC_MAX_PORT ?? 40049);
+  const portRange = { min: rtcMinPort, max: rtcMaxPort };
 
-export const defaultConfig: Required<Proto4WebrtcSfuConfig> = {
-  worker: {
-    rtcMinPort: RTC_MIN_PORT,
-    rtcMaxPort: RTC_MAX_PORT,
-    logLevel: "warn",
-    logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
-  },
+  const turnUrls = (env.TURN_URLS ?? "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
 
-  router: {
-    mediaCodecs: [
-      {
-        kind: "video",
-        mimeType: "video/VP8",
-        clockRate: 90000,
-        parameters: {},
-      },
+  return {
+    worker: {
+      rtcMinPort,
+      rtcMaxPort,
+      logLevel: "warn",
+      logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
+    },
+
+    router: {
+      mediaCodecs: [
+        {
+          kind: "video",
+          mimeType: "video/VP8",
+          clockRate: 90000,
+          parameters: {},
+        },
+      ],
+    },
+
+    // Both UDP and TCP: TCP is the fallback for clients on UDP-hostile
+    // networks, avoiding a TURN relay requirement.
+    webRtcTransport: {
+      listenInfos: [
+        { protocol: "udp", ip: listenIp, announcedAddress, portRange },
+        { protocol: "tcp", ip: listenIp, announcedAddress, portRange },
+      ],
+      enableUdp: true,
+      enableTcp: true,
+      preferUdp: true,
+      enableSctp: true,
+      initialAvailableOutgoingBitrate: 1_000_000,
+    },
+
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      ...turnUrls.map((urls) => ({
+        urls,
+        username: env.TURN_USERNAME,
+        credential: env.TURN_CREDENTIAL,
+      })),
     ],
-  },
+  };
+}
 
-  // Both UDP and TCP: TCP is the fallback for clients on UDP-hostile
-  // networks, avoiding a TURN relay requirement.
-  webRtcTransport: {
-    listenInfos: [
-      {
-        protocol: "udp",
-        ip: "0.0.0.0",
-        portRange: { min: RTC_MIN_PORT, max: RTC_MAX_PORT },
-      },
-      {
-        protocol: "tcp",
-        ip: "0.0.0.0",
-        portRange: { min: RTC_MIN_PORT, max: RTC_MAX_PORT },
-      },
-    ],
-    enableUdp: true,
-    enableTcp: true,
-    preferUdp: true,
-    enableSctp: true,
-    initialAvailableOutgoingBitrate: 1_000_000,
-  },
-
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
+export const defaultConfig: Required<Proto4WebrtcSfuConfig> =
+  buildDefaultConfig(process.env);
 
 // First non-internal IPv4, falling back to loopback. Used as the announced
 // address for wildcard listens: mediasoup puts the listen ip verbatim into

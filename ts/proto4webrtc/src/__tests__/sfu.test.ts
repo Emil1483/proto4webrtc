@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
 import { Proto4WebrtcSfu } from "../sfu.js";
-import { defaultConfig, resolveConfig } from "../config.js";
+import { buildDefaultConfig, defaultConfig, resolveConfig } from "../config.js";
 
 function withEmitter<T extends object>(props: T) {
   return Object.assign(new EventEmitter(), props);
@@ -30,11 +30,14 @@ function makeSfuWithFakeDirectTransport() {
 const settle = () => new Promise((r) => setImmediate(r));
 
 test("resolveConfig: no override returns the defaults, wildcard listens get an announced address", () => {
-  const resolved = resolveConfig();
-  assert.deepEqual(resolved.worker, defaultConfig.worker);
-  assert.deepEqual(resolved.router, defaultConfig.router);
-  // The default 0.0.0.0 listenInfos are unusable as ICE candidates verbatim;
-  // resolveConfig announces a detected address (or loopback) on each.
+  // defaultConfig is built from process.env, so compare against a
+  // known-empty-env base instead of assuming what the host has set.
+  const base = buildDefaultConfig({});
+  const resolved = resolveConfig(base);
+  assert.deepEqual(resolved.worker, base.worker);
+  assert.deepEqual(resolved.router, base.router);
+  // Wildcard listens are unusable as ICE candidates verbatim; resolveConfig
+  // announces a detected address (or loopback) on each.
   const listenInfos =
     "listenInfos" in resolved.webRtcTransport
       ? resolved.webRtcTransport.listenInfos!
@@ -45,8 +48,51 @@ test("resolveConfig: no override returns the defaults, wildcard listens get an a
     assert.match(String(info.announcedAddress), /^\d+\.\d+\.\d+\.\d+$/);
   }
   const { listenInfos: _a, ...restResolved } = resolved.webRtcTransport as never;
-  const { listenInfos: _b, ...restDefault } = defaultConfig.webRtcTransport as never;
-  assert.deepEqual(restResolved, restDefault);
+  const { listenInfos: _b, ...restBase } = base.webRtcTransport as never;
+  assert.deepEqual(restResolved, restBase);
+});
+
+test("buildDefaultConfig: env vars drive listen/announced/ports and TURN", () => {
+  const cfg = buildDefaultConfig({
+    MEDIASOUP_LISTEN_IP: "10.0.0.5",
+    MEDIASOUP_ANNOUNCED_IP: "203.0.113.7",
+    MEDIASOUP_RTC_MIN_PORT: "50000",
+    MEDIASOUP_RTC_MAX_PORT: "50009",
+    TURN_URLS: "turn:1.2.3.4:3478?transport=udp, turn:1.2.3.4:3478?transport=tcp",
+    TURN_USERNAME: "u",
+    TURN_CREDENTIAL: "p",
+  });
+  assert.equal(cfg.worker.rtcMinPort, 50000);
+  assert.equal(cfg.worker.rtcMaxPort, 50009);
+  const infos =
+    "listenInfos" in cfg.webRtcTransport ? cfg.webRtcTransport.listenInfos! : [];
+  assert.deepEqual(
+    infos.map((i) => [i.protocol, i.ip, i.announcedAddress]),
+    [
+      ["udp", "10.0.0.5", "203.0.113.7"],
+      ["tcp", "10.0.0.5", "203.0.113.7"],
+    ],
+  );
+  assert.equal(cfg.iceServers.length, 3); // STUN default + 2 TURN entries
+  assert.deepEqual(cfg.iceServers[1], {
+    urls: "turn:1.2.3.4:3478?transport=udp",
+    username: "u",
+    credential: "p",
+  });
+});
+
+test("buildDefaultConfig: empty env yields wildcard listen, STUN only", () => {
+  const cfg = buildDefaultConfig({});
+  const infos =
+    "listenInfos" in cfg.webRtcTransport ? cfg.webRtcTransport.listenInfos! : [];
+  assert.deepEqual(
+    infos.map((i) => [i.protocol, i.ip, i.announcedAddress]),
+    [
+      ["udp", "0.0.0.0", undefined],
+      ["tcp", "0.0.0.0", undefined],
+    ],
+  );
+  assert.deepEqual(cfg.iceServers, [{ urls: "stun:stun.l.google.com:19302" }]);
 });
 
 test("resolveConfig: an explicit announcedAddress on a wildcard listen is kept", () => {

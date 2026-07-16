@@ -49,9 +49,24 @@ producer reconnects.
 `handleWSClient()` and `subscribe()` do this internally too, so call order
 never matters.
 
-Config is merged shallowly, per top-level section (`worker`/`router`/
-`webRtcTransport`/`iceServers`) — overriding a section means repeating any
-nested fields (e.g. `listenInfos`) you still want from the default:
+## Config
+
+Zero config works out of the box: the defaults are env-driven, and the
+announced address is auto-detected (first non-internal IPv4) when a wildcard
+listen has none — peers on the same machine or LAN just connect.
+
+| Env var | Meaning | Default |
+|---|---|---|
+| `MEDIASOUP_LISTEN_IP` | bind address | `0.0.0.0` |
+| `MEDIASOUP_ANNOUNCED_IP` | public address peers connect to (fallback: `PUBLIC_IP`, then auto-detect) | auto-detect |
+| `MEDIASOUP_RTC_MIN_PORT` / `MEDIASOUP_RTC_MAX_PORT` | RTC UDP/TCP port range (publish + open in firewall) | `40000`–`40049` |
+| `TURN_URLS` | comma-separated TURN urls, appended to the STUN default | unset |
+| `TURN_USERNAME` / `TURN_CREDENTIAL` | TURN credentials | unset |
+
+Code-level config overrides the env-derived defaults. It's merged shallowly,
+per top-level section (`worker`/`router`/`webRtcTransport`/`iceServers`) —
+overriding a section means repeating any nested fields (e.g. `listenInfos`)
+you still want from the default:
 
 ```ts
 const sfu = new Proto4WebrtcSfu({
