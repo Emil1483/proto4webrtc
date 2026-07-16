@@ -1,0 +1,17 @@
+# App protos. The proto4webrtc options come from the BSR — after the module
+# is published, `buf dep update` writes buf.lock and resolves
+# import "proto4webrtc/options.proto".
+version: v2
+modules:
+  - path: proto
+deps:
+  - buf.build/djupvik/proto4webrtc
+lint:
+  # BASIC: structure + casing rules, without STANDARD's enum-value-prefix and
+  # package-version-suffix requirements (we keep short enum values and
+  # unversioned packages).
+  use:
+    - BASIC
+breaking:
+  use:
+    - FILE

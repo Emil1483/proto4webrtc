@@ -1,0 +1,40 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "codegen": "buf generate --include-imports",
+    "prepare": "next-ws patch && npm run codegen"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.12.1",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.2.0",
+    "@mui/material": "^9.2.0",
+    "mediasoup-client": "^3.21.0",
+    "next": "16.2.9",
+    "next-ws": "^2.2.8",
+    "proto4webrtc": "^0.3.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.71.0",
+    "@bufbuild/protoc-gen-es": "^2.12.1",
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^10.6.0",
+    "eslint-config-next": "16.2.9",
+    "protoc-gen-proto4webrtc-ts": "^0.2.0",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,20 @@
+// Camera video stream.
+//
+// Declaration-only: video travels as RTP (VP8), not protobuf, so this message
+// has no fields and never appears on the wire. It exists so the generator
+// knows to wire up a video producer (Python) and consumer (TypeScript) and
+// tag the track with appData.label = "camera".
+
+syntax = "proto3";
+
+package rov.streams;
+
+import "proto4webrtc/options.proto";
+
+message CameraStream {
+  option (proto4webrtc.media_stream) = {
+    label: "camera"
+    kind: VIDEO
+    video_codec: VP8
+  };
+}

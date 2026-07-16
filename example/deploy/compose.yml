@@ -1,0 +1,51 @@
+# Deployment for the mediasoup-based server.
+#
+# mediasoup runs *inside* the Next.js process (it's a library with a native
+# worker subprocess) — there is no separate mediasoup container. The server
+# needs its RTC media ports reachable, so we use host networking (same reason
+# as before: clean UDP, real public IP, no Docker NAT mangling).
+#
+# coturn is now OPTIONAL: mediasoup enables ICE-TCP on its announced port, which
+# already punches through most UDP-hostile networks without a relay. Keep coturn
+# only if you still see failures on locked-down client networks (then also set
+# TURN_* below so clients get relay candidates).
+#
+# Firewall (ufw AND Linode Cloud Firewall) must allow:
+#   - TCP 3000                       (app + signaling; or front with Caddy on 443)
+#   - UDP + TCP 40000-40100          (mediasoup RTC media/data)
+#   - [if coturn] UDP+TCP 3478, UDP 49160-49200
+
+services:
+  gui:
+    image: ghcr.io/emil1483/web-rtc-test:${TAG}
+    container_name: web-rtc-test
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - HOSTNAME=0.0.0.0                       # bind all interfaces (Next standalone)
+      - PORT=3001
+      - PUBLIC_IP=172.234.116.16
+      # mediasoup
+      - MEDIASOUP_ANNOUNCED_IP=172.234.116.16  # public address peers connect to
+      - MEDIASOUP_LISTEN_IP=0.0.0.0
+      - MEDIASOUP_RTC_MIN_PORT=40000
+      - MEDIASOUP_RTC_MAX_PORT=40100
+      # Optional TURN (only if keeping coturn below). Clients get these as
+      # iceServers via /api/ice-config; mediasoup itself doesn't need them.
+      # - TURN_URLS=turn:172.234.116.16:3478?transport=udp,turn:172.234.116.16:3478?transport=tcp
+      # - TURN_USERNAME=demo
+      # - TURN_CREDENTIAL=demopass
+
+  # Optional — uncomment only if mediasoup's ICE-TCP fallback isn't enough.
+  # coturn:
+  #   image: coturn/coturn
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   command: >
+  #     -n --realm=web-rtc-test.linode.djupvik.dev
+  #     --lt-cred-mech --fingerprint
+  #     --listening-port=3478
+  #     --min-port=49160 --max-port=49200
+  #     --user=demo:demopass
+  #     --external-ip=172.234.116.16
+  #     --no-cli --log-file=stdout

@@ -1,0 +1,28 @@
+// Thruster telemetry stream.
+//
+// Wire payload: this message, binary protobuf, one message per sample on the
+// "telemetry" data channel. Replaces the ad-hoc JSON {"t": ..., "v": [...]}.
+
+syntax = "proto3";
+
+package rov.streams;
+
+import "proto4webrtc/options.proto";
+
+message Thrusters {
+  option (proto4webrtc.data_stream) = {
+    label: "telemetry"
+    delivery: UNRELIABLE
+    backpressure: BUFFER_ALL
+  };
+
+  // Sample time, seconds since epoch (ROS header.stamp.sec + nanosec * 1e-9).
+  // Lets consumers measure end-to-end latency.
+  double stamp = 1;
+
+  // One field per thruster, numbering fixed by the vehicle config.
+  float value0 = 2;
+  float value1 = 3;
+  float value2 = 4;
+  float value3 = 5;
+}

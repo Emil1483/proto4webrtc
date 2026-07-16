@@ -1,0 +1,20 @@
+# TypeScript codegen for the stream protofiles (run via `npm run codegen`).
+# protoc-gen-es emits one _pb.ts per proto file into src/gen/;
+# protoc-gen-proto4webrtc-ts (npm devDependency) renders the mediasoup
+# consumer wrappers on top as src/gen/proto4webrtc.ts.
+#
+# The codegen script passes --include-imports so proto4webrtc/options_pb.ts
+# (a BSR dep, not a workspace file) is generated too — the stream _pb.ts
+# files import it.
+version: v2
+clean: true
+inputs:
+  - directory: ..
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+  - local: protoc-gen-proto4webrtc-ts
+    out: src/gen
+    strategy: all # plugin aggregates all streams into one file

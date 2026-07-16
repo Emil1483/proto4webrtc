@@ -1,0 +1,30 @@
+# ansible-playbook -i inventory.yml --vault-id default@/etc/ansible_pass_marinor deploy.yml --diff --extra-vars '{"tag": "v1.13.1"}'
+
+- name: Deploy
+  hosts: linode
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure deploy dir exists
+      file:
+        path: /root/web-rtc-test
+        state: directory
+
+    - name: Upsert compose file
+      copy:
+        src: compose.yml
+        dest: /root/web-rtc-test/compose.yml
+
+    - name: Update .env file
+      blockinfile:
+        path: /root/web-rtc-test/.env
+        create: true
+        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+        block: |
+          TAG={{ tag }}
+
+    - name: Run docker compose
+      shell: docker compose up -d
+      args:
+        chdir: /root/web-rtc-test

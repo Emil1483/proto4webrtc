@@ -1,0 +1,47 @@
+// Point cloud stream.
+//
+// Wire payload: this message, binary protobuf, one message per cloud on the
+// "pointcloud" data channel. Replaces the ad-hoc "f64 stamp + raw bytes"
+// framing.
+//
+// Points stay as packed bytes rather than repeated floats: a cloud is ~3000
+// points today (real sensors far more), and a bytes field decodes to a
+// zero-copy Uint8Array in the browser (Float32Array view on top), while
+// repeated float would materialize a number[] per cloud. The bytes content is
+// exactly what sensor_msgs/PointCloud2 carries, so the producer forwards
+// msg.data verbatim.
+
+syntax = "proto3";
+
+package rov.streams;
+
+import "proto4webrtc/options.proto";
+
+message PointCloud {
+  option (proto4webrtc.data_stream) = {
+    label: "pointcloud"
+    delivery: RELIABLE_ORDERED    // clouds fragment into many SCTP chunks
+    backpressure: DROP_IF_BUFFERED // newest cloud wins
+    max_buffered_factor: 2
+  };
+
+  // Capture time, seconds since epoch.
+  double stamp = 1;
+
+  // Layout of `data`. Explicit so the consumer never guesses.
+  PointFormat format = 2;
+
+  // Number of points in `data`.
+  uint32 count = 3;
+
+  // Packed point records, little-endian, `count` * stride(format) bytes.
+  bytes data = 4;
+}
+
+enum PointFormat {
+  POINT_FORMAT_UNSPECIFIED = 0;
+  // float32 x, y, z per point (stride 12). What pointcloud_node publishes.
+  XYZ_F32 = 1;
+  // float32 x, y, z + uint32 packed 0x00RRGGBB color (stride 16). Future.
+  XYZ_F32_RGB_U32 = 2;
+}

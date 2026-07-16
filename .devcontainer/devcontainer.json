@@ -1,0 +1,37 @@
+{
+  "name": "ROS2 Humble",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/repo_root,type=bind",
+  "mounts": [
+    "source=${localEnv:HOME}/.gitconfig,target=/home/dev/.gitconfig,type=bind,consistency=cached,readonly",
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+  ],
+  "remoteUser": "dev",
+  "runArgs": [
+    "--network=host",
+    "--env=DISPLAY=${localEnv:DISPLAY}",
+    "--env=LIBGL_ALWAYS_SOFTWARE=1",
+    "--env=MEDIASOUP_ANNOUNCED_IP=127.0.0.1",
+    "--env=MEDIASOUP_LISTEN_IP=127.0.0.1"
+  ],
+  "workspaceFolder": "/repo_root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bufbuild.vscode-buf"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/repo_root/example/robot/ros2_ws/.venv/bin/python",
+        "python.venvPath": "/repo_root/example/robot/ros2_ws",
+        "ros.distro": "humble",
+        "terminal.integrated.cwd": "/repo_root"
+      }
+    }
+  },
+  "postCreateCommand": "rosdep update && rosdep install --from-paths /repo_root/example/robot/ros2_ws/src --ignore-src -r -y && poetry install -C /repo_root/example/robot/ros2_ws && npm --prefix /repo_root/example/server install"
+}

@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+  actions: read
+
+env:
+  REGISTRY: ghcr.io
+  ORG: emil1483
+  IMAGE_NAME: web-rtc-test
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      docker_tag: ${{ steps.docker_tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Docker tag
+        id: docker_tag
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs:
+      - setup
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: server
+          platforms: linux/amd64
+          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:${{ needs.setup.outputs.docker_tag }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: ci-deploy
+      cancel-in-progress: false
+
+    needs:
+      - build
+      - setup
+
+    if: github.ref_type == 'tag'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create ansible configuration directory
+        run: sudo mkdir -p /etc/ansible
+
+      - name: Create Ansible configuration file
+        run: |
+          sudo tee /etc/ansible/ansible.cfg <<EOF
+          [defaults]
+          host_key_checking = False
+          EOF
+
+      - name: Setting ansible vault password
+        run: echo '${{ secrets.ANSIBLE_VAULT_PASS }}' | sudo tee /etc/ansible_pass
+        shell: bash
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository --yes --update ppa:ansible/ansible
+          sudo apt-get install -y ansible
+          sudo pip install docker
+
+      - name: Deploy ansible playbook
+        shell: bash
+        working-directory: deploy
+        run: |
+          ansible-playbook -i inventory.yml --vault-id default@/etc/ansible_pass deploy.yml --diff --extra-vars '{"tag": "${{ needs.setup.outputs.docker_tag }}" }'
