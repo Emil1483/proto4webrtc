@@ -8,10 +8,10 @@ import * as mediasoup from "mediasoup";
 import type { types } from "mediasoup";
 import type { WebSocket } from "ws";
 
-import { resolveConfig, type Proto4WebrtcSfuConfig } from "./config.js";
+import { resolveConfig, type IceServer, type Proto4WebrtcSfuConfig } from "./config.js";
 import { PeerConnection } from "./peer.js";
 
-export type { Proto4WebrtcSfuConfig };
+export type { IceServer, Proto4WebrtcSfuConfig };
 
 export interface Proto4WebrtcSfuStatus {
   ready: boolean;
@@ -38,6 +38,7 @@ export class Proto4WebrtcSfu {
 
   constructor(config?: Proto4WebrtcSfuConfig) {
     this.config = resolveConfig(config);
+    console.log(`[proto4webrtc] ${this.config.iceServers.length} ICE server(s) configured`);
   }
 
   get router(): types.Router {
@@ -62,6 +63,11 @@ export class Proto4WebrtcSfu {
       })();
     }
     await this.initPromise;
+  }
+
+  /** ICE servers (STUN + optional TURN) for a browser consumer's RTCPeerConnection. */
+  getIceServers(): IceServer[] {
+    return this.config.iceServers;
   }
 
   getStatus(): Proto4WebrtcSfuStatus {

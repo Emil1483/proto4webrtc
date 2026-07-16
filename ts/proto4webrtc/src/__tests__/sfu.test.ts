@@ -42,6 +42,23 @@ test("resolveConfig: overriding one field in a section keeps its other default f
   assert.equal(resolved.worker.rtcMinPort, defaultConfig.worker.rtcMinPort);
 });
 
+test("resolveConfig: iceServers defaults to STUN only", () => {
+  const resolved = resolveConfig();
+  assert.deepEqual(resolved.iceServers, [{ urls: "stun:stun.l.google.com:19302" }]);
+});
+
+test("resolveConfig: iceServers override replaces the default wholesale", () => {
+  const turn = [{ urls: "turn:example.com:3478", username: "u", credential: "p" }];
+  const resolved = resolveConfig({ iceServers: turn });
+  assert.deepEqual(resolved.iceServers, turn);
+});
+
+test("getIceServers returns the resolved config's iceServers", () => {
+  const turn = [{ urls: "turn:example.com:3478" }];
+  const sfu = new Proto4WebrtcSfu({ iceServers: turn });
+  assert.deepEqual(sfu.getIceServers(), turn);
+});
+
 test("getStatus reflects an unconnected instance", () => {
   const sfu = new Proto4WebrtcSfu();
   assert.deepEqual(sfu.getStatus(), { ready: false, peers: 0, producers: 0, dataProducers: 0 });

@@ -4,6 +4,12 @@
 
 import type { types } from "mediasoup";
 
+export interface IceServer {
+  urls: string;
+  username?: string;
+  credential?: string;
+}
+
 export interface Proto4WebrtcSfuConfig {
   worker?: Partial<types.WorkerSettings>;
   router?: { mediaCodecs?: types.RouterRtpCodecCapability[] };
@@ -11,6 +17,10 @@ export interface Proto4WebrtcSfuConfig {
   // vs listenIps vs webRtcServer) that Partial<> can't meaningfully wrap.
   // Overriding this section means supplying a complete, valid options object.
   webRtcTransport?: types.WebRtcTransportOptions;
+  // Given to browser consumers for the RTCPeerConnection (STUN + optional
+  // TURN). Replaces the default wholesale, same as webRtcTransport — include
+  // a STUN entry too if you still want one alongside your own TURN servers.
+  iceServers?: IceServer[];
 }
 
 const RTC_MIN_PORT = 40000;
@@ -56,6 +66,8 @@ export const defaultConfig: Required<Proto4WebrtcSfuConfig> = {
     enableSctp: true,
     initialAvailableOutgoingBitrate: 1_000_000,
   },
+
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
 // Shallow, per-section merge — overriding a section means repeating any
@@ -72,5 +84,6 @@ export function resolveConfig(config?: Proto4WebrtcSfuConfig): Required<Proto4We
       ...defaultConfig.webRtcTransport,
       ...config?.webRtcTransport,
     } as types.WebRtcTransportOptions,
+    iceServers: config?.iceServers ?? defaultConfig.iceServers,
   };
 }

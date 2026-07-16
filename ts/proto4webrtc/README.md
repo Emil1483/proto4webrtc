@@ -43,8 +43,8 @@ producer reconnects.
 never matters.
 
 Config is merged shallowly, per top-level section (`worker`/`router`/
-`webRtcTransport`) — overriding a section means repeating any nested fields
-(e.g. `listenInfos`) you still want from the default:
+`webRtcTransport`/`iceServers`) — overriding a section means repeating any
+nested fields (e.g. `listenInfos`) you still want from the default:
 
 ```ts
 const sfu = new Proto4WebrtcSfu({
@@ -52,7 +52,23 @@ const sfu = new Proto4WebrtcSfu({
     listenInfos: [{ protocol: "udp", ip: "0.0.0.0", announcedAddress: process.env.PUBLIC_IP }],
     enableUdp: true,
   },
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: process.env.TURN_URL!, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL },
+  ],
 });
+```
+
+`iceServers` defaults to a public STUN server. `sfu.getIceServers()` returns
+the resolved list — hand it to browser consumers however your app already
+exposes server-only config to the client (e.g. a Next.js Server Action),
+since it can include TURN credentials:
+
+```ts
+export async function getIceServers() {
+  "use server";
+  return sfu.getIceServers();
+}
 ```
 
 Full docs: https://github.com/Emil1483/proto4webrtc

@@ -188,6 +188,13 @@ export function GET() {
   return Response.json(sfu.getStatus());
 }
 
+// hand to browser consumers however your app exposes server-only config
+// (e.g. a Next.js Server Action) — may include TURN credentials:
+export async function getIceServers() {
+  "use server";
+  return sfu.getIceServers(); // defaults to a public STUN server
+}
+
 // anywhere else in the same server process — no websocket, no browser:
 const unsubscribe = TelemetryStream.subscribe(sfu, (msg) => {
   console.log(msg.stamp, msg.value0);
