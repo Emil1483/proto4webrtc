@@ -2,6 +2,8 @@
 // web-rtc-test/server's config.ts minus its env-var reading (an app
 // concern — this library takes final resolved values).
 
+import os from "node:os";
+
 import type { types } from "mediasoup";
 
 export interface IceServer {
@@ -70,8 +72,37 @@ export const defaultConfig: Required<Proto4WebrtcSfuConfig> = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
+// First non-internal IPv4, falling back to loopback. Used as the announced
+// address for wildcard listens: mediasoup puts the listen ip verbatim into
+// the ICE candidates, and a candidate of "0.0.0.0" is unreachable for every
+// peer.
+function detectAnnouncedAddress(): string {
+  for (const infos of Object.values(os.networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (!info.internal && info.family === "IPv4") return info.address;
+    }
+  }
+  return "127.0.0.1";
+}
+
+function withAnnouncedAddress(
+  transport: types.WebRtcTransportOptions,
+): types.WebRtcTransportOptions {
+  if (!("listenInfos" in transport) || !transport.listenInfos) return transport;
+  return {
+    ...transport,
+    listenInfos: transport.listenInfos.map((info) =>
+      (info.ip === "0.0.0.0" || info.ip === "::") && !info.announcedAddress
+        ? { ...info, announcedAddress: detectAnnouncedAddress() }
+        : info,
+    ),
+  };
+}
+
 // Shallow, per-section merge — overriding a section means repeating any
 // nested fields (e.g. listenInfos) you still want from the default.
+// Wildcard listenInfos (0.0.0.0/::) without an announcedAddress get the
+// machine's first non-internal IPv4 announced automatically.
 export function resolveConfig(config?: Proto4WebrtcSfuConfig): Required<Proto4WebrtcSfuConfig> {
   return {
     worker: { ...defaultConfig.worker, ...config?.worker },
@@ -80,10 +111,10 @@ export function resolveConfig(config?: Proto4WebrtcSfuConfig): Required<Proto4We
     // variant" shape as far as the type-checker can tell, even though at
     // runtime an override (a complete, valid options object per its own type)
     // spread over the default produces another valid one.
-    webRtcTransport: {
+    webRtcTransport: withAnnouncedAddress({
       ...defaultConfig.webRtcTransport,
       ...config?.webRtcTransport,
-    } as types.WebRtcTransportOptions,
+    } as types.WebRtcTransportOptions),
     iceServers: config?.iceServers ?? defaultConfig.iceServers,
   };
 }

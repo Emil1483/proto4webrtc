@@ -20,11 +20,9 @@ import Typography from "@mui/material/Typography";
 
 import {
   connectToSfu,
-  consumeData,
-  type ProducerList,
-  type SfuConnection,
-} from "@/lib/sfuClient";
-import { PointCloudStream, type PointCloud } from "@/gen/proto4webrtc";
+  type PointCloud,
+  type StreamsClient,
+} from "@/gen/proto4webrtc";
 
 export default function PointcloudPage() {
   const [state, setState] = useState<string>("new");
@@ -34,48 +32,36 @@ export default function PointcloudPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const points = useRef<Float32Array>(new Float32Array(0));
-  const lastT = useRef<number>(-Infinity);
   const msgTimes = useRef<number[]>([]);
   // Orbit camera. Yaw auto-spins until the user drags.
   const cam = useRef({ yaw: 0.6, pitch: 0.45, dist: 3.2, autoSpin: true });
 
   useEffect(() => {
     let cancelled = false;
-    let conn: SfuConnection | null = null;
+    let client: StreamsClient | null = null;
 
+    // Stale (out-of-order) clouds are dropped by subscribeToPointCloudStream.
     const handleCloud = (msg: PointCloud) => {
+      setRobotOnline(true);
       msgTimes.current.push(performance.now());
-      if (msg.stamp <= lastT.current) return; // unordered delivery: drop stale clouds
-      lastT.current = msg.stamp;
       // .slice() gives a fresh, 4-byte-aligned buffer so the Float32Array
       // view over msg.data is always valid regardless of its source offset.
       points.current = new Float32Array(msg.data.slice().buffer);
     };
 
-    const onPointcloud = async (dataProducerId: string) => {
-      const dc = await consumeData(conn!, dataProducerId);
-      PointCloudStream.attach(dc, handleCloud);
-      setRobotOnline(true);
-    };
-
     (async () => {
-      conn = await connectToSfu(setState);
-      if (cancelled) return;
-
-      conn.signaling.onEvent = (msg) => {
-        if (msg.event === "newDataProducer" && msg.label === PointCloudStream.label) {
-          void onPointcloud(msg.dataProducerId as string);
-        } else if (msg.event === "dataProducerClosed" || msg.event === "producerClosed") {
-          setRobotOnline(false);
-          lastT.current = -Infinity;
-          points.current = new Float32Array(0);
-        }
-      };
-
-      const existing = await conn.signaling.request<ProducerList>("getProducers");
-      for (const dp of existing.dataProducers) {
-        if (dp.label === PointCloudStream.label) await onPointcloud(dp.dataProducerId);
+      client = await connectToSfu({ onConnectionState: setState });
+      if (cancelled) {
+        client.close();
+        return;
       }
+
+      // Covers the robot whether it connected before or after this page.
+      client.subscribeToPointCloudStream(handleCloud);
+      client.onProducerClosed(() => {
+        setRobotOnline(false);
+        points.current = new Float32Array(0);
+      });
     })().catch((err) => console.error("[sfu] setup failed:", err));
 
     // Render at animation rate, decoupled from the cloud arrival rate.
@@ -100,8 +86,7 @@ export default function PointcloudPage() {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
-      conn?.recvTransport.close();
-      conn?.signaling.close();
+      client?.close();
     };
   }, []);
 

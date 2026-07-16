@@ -12,12 +12,9 @@ import Typography from "@mui/material/Typography";
 
 import {
   connectToSfu,
-  consumeData,
-  consumeVideo,
-  type ProducerList,
-  type SfuConnection,
-} from "@/lib/sfuClient";
-import { CameraStream, ThrustersStream, type Thrusters } from "@/gen/proto4webrtc";
+  type StreamsClient,
+  type Thrusters,
+} from "@/gen/proto4webrtc";
 
 const THRUSTER_COLORS = ["#42a5f5", "#66bb6a", "#ffa726", "#ef5350"];
 
@@ -75,59 +72,37 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const latestValues = useRef<number[]>([0, 0, 0, 0]);
-  const lastT = useRef<number>(-Infinity);
   const msgTimes = useRef<number[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    let conn: SfuConnection | null = null;
+    let client: StreamsClient | null = null;
 
+    // Stale (out-of-order) messages are dropped by subscribeToThrustersStream.
     const handleTelemetry = (msg: Thrusters) => {
       msgTimes.current.push(performance.now());
-      if (msg.stamp > lastT.current) {
-        lastT.current = msg.stamp;
-        latestValues.current = [msg.value0, msg.value1, msg.value2, msg.value3];
-      }
-    };
-
-    const onVideo = async (producerId: string) => {
-      const consumer = await consumeVideo(conn!, producerId);
-      if (videoRef.current) {
-        videoRef.current.srcObject = new MediaStream([consumer.track]);
-      }
-      setRobotOnline(true);
-    };
-
-    const onTelemetry = async (dataProducerId: string) => {
-      const dc = await consumeData(conn!, dataProducerId);
-      ThrustersStream.attach(dc, handleTelemetry);
+      latestValues.current = [msg.value0, msg.value1, msg.value2, msg.value3];
     };
 
     (async () => {
-      conn = await connectToSfu(setState);
-      if (cancelled) return;
+      client = await connectToSfu({ onConnectionState: setState });
+      if (cancelled) {
+        client.close();
+        return;
+      }
 
-      // Server pushes availability events; consume what this screen needs.
-      conn.signaling.onEvent = (msg) => {
-        if (msg.event === "newProducer" && msg.kind === CameraStream.kind) {
-          void onVideo(msg.producerId as string);
-        } else if (msg.event === "newDataProducer") {
-          if (msg.label === ThrustersStream.label) void onTelemetry(msg.dataProducerId as string);
-        } else if (msg.event === "producerClosed") {
-          setRobotOnline(false);
-          lastT.current = -Infinity;
-          if (videoRef.current) videoRef.current.srcObject = null;
+      // Covers the robot whether it connected before or after this page.
+      client.subscribeToCameraStream((track) => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = new MediaStream([track]);
         }
-      };
-
-      // Consume anything already being produced (robot connected first).
-      const existing = await conn.signaling.request<ProducerList>("getProducers");
-      for (const pr of existing.producers) {
-        if (pr.kind === CameraStream.kind) await onVideo(pr.producerId);
-      }
-      for (const dp of existing.dataProducers) {
-        if (dp.label === ThrustersStream.label) await onTelemetry(dp.dataProducerId);
-      }
+        setRobotOnline(true);
+      });
+      client.subscribeToThrustersStream(handleTelemetry);
+      client.onProducerClosed(() => {
+        setRobotOnline(false);
+        if (videoRef.current) videoRef.current.srcObject = null;
+      });
     })().catch((err) => console.error("[sfu] setup failed:", err));
 
     // Render telemetry at animation rate, decoupled from the 100 Hz stream.
@@ -144,8 +119,7 @@ export default function Home() {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
-      conn?.recvTransport.close();
-      conn?.signaling.close();
+      client?.close();
     };
   }, []);
 

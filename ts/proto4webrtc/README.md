@@ -1,9 +1,16 @@
-# proto4webrtc (TypeScript SFU runtime)
+# proto4webrtc (TypeScript runtime)
 
-Runs the mediasoup SFU side: signaling, Worker/Router/transport lifecycle,
-and in-process access to a data stream by label — no browser, no WebRTC. The
-codegen counterpart is the npm package `protoc-gen-proto4webrtc-ts`, which
-generates a typed `subscribe()`/`attach()`/`decode()` wrapper per stream.
+Two entry points:
+
+- `proto4webrtc` — the mediasoup SFU side (Node): signaling,
+  Worker/Router/transport lifecycle, and in-process access to a data stream
+  by label — no browser, no WebRTC.
+- `proto4webrtc/client` — the browser consumer: one call for signaling,
+  Device load, receive transport, and ICE config, plus
+  existing-and-future-producer subscriptions per stream.
+
+The codegen counterpart is the npm package `protoc-gen-proto4webrtc-ts`,
+which generates typed wrappers per stream on top of both.
 
 ```sh
 npm install proto4webrtc
@@ -59,16 +66,34 @@ const sfu = new Proto4WebrtcSfu({
 });
 ```
 
-`iceServers` defaults to a public STUN server. `sfu.getIceServers()` returns
-the resolved list — hand it to browser consumers however your app already
-exposes server-only config to the client (e.g. a Next.js Server Action),
-since it can include TURN credentials:
+`iceServers` defaults to a public STUN server. The resolved list is served
+to browser consumers automatically in the `createTransport` signaling reply
+(anyone who can reach the signaling endpoint gets it, TURN credentials
+included — scope credentials accordingly). `sfu.getIceServers()` returns the
+same list for manual wiring.
+
+## Browser consumer (`proto4webrtc/client`)
+
+Prefer the generated `connectToSfu()` from `protoc-gen-proto4webrtc-ts`
+output — it returns this client extended with a typed
+`subscribeTo<Stream>()` method per stream. The raw client underneath:
 
 ```ts
-export async function getIceServers() {
-  "use server";
-  return sfu.getIceServers();
-}
+import { connectToSfu } from "proto4webrtc/client";
+
+const client = await connectToSfu({
+  url: "ws://localhost:3000/api/sfu", // default: ws(s)://<location.host>/api/sfu
+  onConnectionState: (state) => console.log(state),
+});
+
+const stop = client.subscribe("telemetry", (data) => { /* raw Uint8Array */ });
+client.onMedia("video", (track) => { videoEl.srcObject = new MediaStream([track]); });
+client.onProducerClosed(() => { /* a producer went away */ });
+client.close();
 ```
+
+`subscribe()`/`onMedia()` cover the producer already online at call time and
+any that (re)appears later, and create consumers only for what was asked —
+the SFU never sends this peer unrequested streams.
 
 Full docs: https://github.com/Emil1483/proto4webrtc

@@ -2,7 +2,7 @@
 // browser). Proto4WebrtcSfu (npm package "proto4webrtc") owns the request/
 // response protocol and lazily connects the Worker/Router on first use.
 
-import { sfu } from "@/lib/mediasoup/sfu";
+import { sfu } from "@/lib/proto4webrtc/sfu";
 
 export function UPGRADE(
   client: import("ws").WebSocket,

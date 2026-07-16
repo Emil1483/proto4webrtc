@@ -29,11 +29,39 @@ function makeSfuWithFakeDirectTransport() {
 
 const settle = () => new Promise((r) => setImmediate(r));
 
-test("resolveConfig: no override returns the defaults untouched", () => {
+test("resolveConfig: no override returns the defaults, wildcard listens get an announced address", () => {
   const resolved = resolveConfig();
   assert.deepEqual(resolved.worker, defaultConfig.worker);
   assert.deepEqual(resolved.router, defaultConfig.router);
-  assert.deepEqual(resolved.webRtcTransport, defaultConfig.webRtcTransport);
+  // The default 0.0.0.0 listenInfos are unusable as ICE candidates verbatim;
+  // resolveConfig announces a detected address (or loopback) on each.
+  const listenInfos =
+    "listenInfos" in resolved.webRtcTransport
+      ? resolved.webRtcTransport.listenInfos!
+      : [];
+  assert.equal(listenInfos.length, 2);
+  for (const info of listenInfos) {
+    assert.equal(info.ip, "0.0.0.0");
+    assert.match(String(info.announcedAddress), /^\d+\.\d+\.\d+\.\d+$/);
+  }
+  const { listenInfos: _a, ...restResolved } = resolved.webRtcTransport as never;
+  const { listenInfos: _b, ...restDefault } = defaultConfig.webRtcTransport as never;
+  assert.deepEqual(restResolved, restDefault);
+});
+
+test("resolveConfig: an explicit announcedAddress on a wildcard listen is kept", () => {
+  const resolved = resolveConfig({
+    webRtcTransport: {
+      listenInfos: [
+        { protocol: "udp", ip: "0.0.0.0", announcedAddress: "203.0.113.7" },
+      ],
+    },
+  });
+  const listenInfos =
+    "listenInfos" in resolved.webRtcTransport
+      ? resolved.webRtcTransport.listenInfos!
+      : [];
+  assert.equal(listenInfos[0].announcedAddress, "203.0.113.7");
 });
 
 test("resolveConfig: overriding one field in a section keeps its other default fields", () => {

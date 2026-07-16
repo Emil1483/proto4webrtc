@@ -124,6 +124,9 @@ export class PeerConnection {
       iceCandidates: transport.iceCandidates,
       dtlsParameters: transport.dtlsParameters,
       sctpParameters: transport.sctpParameters,
+      // STUN + optional TURN: mediasoup-client passes this straight into the
+      // browser's RTCPeerConnection as a transport option.
+      iceServers: this.sfu.getIceServers(),
     };
   }
 

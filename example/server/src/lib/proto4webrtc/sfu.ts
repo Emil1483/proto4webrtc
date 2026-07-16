@@ -3,9 +3,11 @@
 // are all handled by Proto4WebrtcSfu (npm package "proto4webrtc"). This
 // module only supplies the env-driven parts that differ per deployment.
 //
-// Env:
+// Env (all optional — defaults work for same-machine/LAN dev):
 //   MEDIASOUP_LISTEN_IP      bind address inside the container/host (default 0.0.0.0)
-//   MEDIASOUP_ANNOUNCED_IP   public address peers connect to (falls back to PUBLIC_IP)
+//   MEDIASOUP_ANNOUNCED_IP   public address peers connect to (falls back to
+//                            PUBLIC_IP, then to the machine's first
+//                            non-internal IPv4, auto-detected by the library)
 //   MEDIASOUP_RTC_MIN_PORT   RTC UDP/TCP port range start (default 40000)
 //   MEDIASOUP_RTC_MAX_PORT   RTC UDP/TCP port range end   (default 40049)
 //   TURN_URLS                comma-separated TURN urls, e.g.

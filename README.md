@@ -151,20 +151,32 @@ no manual aiortc track/queue/pts code needed.
 
 ### TypeScript (consumer side, browser)
 
-```ts
-import { TelemetryStream, CameraStream, type Telemetry } from "./gen/proto4webrtc";
+`connectToSfu()` (generated; wraps `proto4webrtc/client`) does the whole
+setup — WebSocket signaling, Device load, receive transport, ICE config
+(served by the SFU) — and returns the client extended with a typed
+`subscribeTo<Stream>()` method per declared stream:
 
-// Find the producers by label (however your signaling exposes them), then:
-TelemetryStream.attach(dataConsumer, (msg: Telemetry) => {
+```ts
+import { connectToSfu } from "./gen/proto4webrtc";
+
+const client = await connectToSfu(); // default url: ws(s)://<host>/api/sfu
+
+client.subscribeToTelemetryStream((msg) => {
   console.log(msg.stamp, msg.value0);
 });
-
-// Media streams carry no protobuf — match the RTP producer by label:
-//   producer.appData.label === CameraStream.label  (kind: CameraStream.kind)
+client.subscribeToCameraStream((track) => {
+  videoEl.srcObject = new MediaStream([track]);
+});
+client.onProducerClosed(() => { /* robot went away */ });
+client.close();
 ```
 
-`attach()` decodes every data-channel message into the typed callback;
-`decode()` is available for manual wiring.
+Each subscribe covers the producer already online at call time and any that
+(re)appears later, and consumes only what was asked for — the SFU never sends
+this peer the streams it didn't subscribe to. Messages with a scalar `stamp`
+field are deduplicated automatically: out-of-order (stale) messages are
+dropped before the callback. Lower-level `attach()` (raw mediasoup
+DataConsumer) and `decode()` remain available for manual wiring.
 
 ### TypeScript (SFU side, server)
 
@@ -186,13 +198,6 @@ export async function UPGRADE(client: import("ws").WebSocket) {
 // e.g. api/status/route.ts:
 export function GET() {
   return Response.json(sfu.getStatus());
-}
-
-// hand to browser consumers however your app exposes server-only config
-// (e.g. a Next.js Server Action) — may include TURN credentials:
-export async function getIceServers() {
-  "use server";
-  return sfu.getIceServers(); // defaults to a public STUN server
 }
 
 // anywhere else in the same server process — no websocket, no browser:
@@ -264,7 +269,13 @@ npm --prefix ts/proto4webrtc test
 
 ## Publishing
 
+All three packages (pip `proto4webrtc`, npm `proto4webrtc`, npm
+`protoc-gen-proto4webrtc-ts`) share one version number — bump
+`python/pyproject.toml`, `ts/proto4webrtc/package.json`, and
+`ts/package.json` together before publishing.
+
 - Options module: `buf registry login`, then `buf push` from the repo root.
 - pip: `cd python && python -m build && twine upload dist/*`
-- npm (codegen plugin): `cd ts && npm publish`
-- npm (SFU runtime): `cd ts/proto4webrtc && npm run build && npm publish`
+- npm: log in once with `npm login` (browser flow; check with `npm whoami`), then:
+  - codegen plugin: `cd ts && npm publish`
+  - runtime (SFU + browser client): `cd ts/proto4webrtc && npm run build && npm test && npm publish`

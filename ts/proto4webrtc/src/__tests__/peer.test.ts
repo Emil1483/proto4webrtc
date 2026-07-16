@@ -75,6 +75,7 @@ function makeFakeSfu() {
     events,
     router,
     async connectToSfu() {},
+    getIceServers: () => [{ urls: "stun:stun.example.com" }],
   } as unknown as Proto4WebrtcSfu;
 }
 
