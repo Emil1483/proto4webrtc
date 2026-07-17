@@ -1,8 +1,8 @@
 # Buf v2 workspace: the publishable options module (proto/) plus the example
 # protos used by the docs and the plugin tests (example/proto/).
 #
-# Publish the options with `buf registry login` + `buf push` (pushes the
-# named module only).
+# Publish the options with `buf registry login` + `buf push --exclude-unnamed`
+# (pushes the named module only, skipping the unnamed example module).
 version: v2
 modules:
   - path: proto

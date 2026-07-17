@@ -1,6 +1,6 @@
 {
   "name": "proto4webrtc",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "mediasoup runtime for proto4webrtc-annotated protofiles: SFU (signaling, transports, in-process data-stream subscriptions) and browser consumer client",
   "license": "MIT",
   "author": "Emil Djupvik",

@@ -191,9 +191,14 @@ function render(dataStreams, mediaStreams, rpcServices) {
   const dataBlocks = dataStreams.map((s) => {
     const subscribeBody = s.hasStamp
       ? `\
-    // Data channels deliver unordered; drop messages whose \`stamp\` isn't
-    // newer than the last one delivered. A producer restart resets its clock,
-    // so re-admit everything whenever a producer goes away.
+    // Data channels may deliver unordered; by default drop messages whose
+    // \`stamp\` isn't newer than the last one delivered. Pass
+    // { dropOutOfOrder: false } for reliable-ordered streams where every
+    // message matters and stamps aren't monotonic across producers. A
+    // producer restart resets the clock, so re-admit everything when one goes.
+    if (options?.dropOutOfOrder === false) {
+      return sfu.subscribe(this.label, (data) => onMessage(this.decode(data)));
+    }
     let lastStamp = -Infinity;
     const unsubscribe = sfu.subscribe(this.label, (data) => {
       const msg = this.decode(data);
@@ -211,7 +216,8 @@ function render(dataStreams, mediaStreams, rpcServices) {
       : `\
     return sfu.subscribe(this.label, (data) => onMessage(this.decode(data)));`;
     const subscribeDoc = s.hasStamp
-      ? `\n   * Stale messages (non-increasing \`stamp\`) are dropped automatically.`
+      ? `\n   * Stale messages (non-increasing \`stamp\`) are dropped by default;
+   * pass { dropOutOfOrder: false } to deliver every message.`
       : "";
     return `\
 /** Data stream "${s.label}" (${s.typeName}). */
@@ -237,7 +243,9 @@ export const ${exportName(s.message)} = {
    */
   subscribe(
     sfu: Proto4WebrtcSubscribable,
-    onMessage: (msg: ${s.message}) => void,
+    onMessage: (msg: ${s.message}) => void,${
+      s.hasStamp ? "\n    options?: { dropOutOfOrder?: boolean }," : ""
+    }
   ): () => void {
 ${subscribeBody}
   },
@@ -307,11 +315,17 @@ ${rpcMethods
   const clientMethods = [
     ...dataStreams.map((s) => ({
       name: exportName(s.message),
-      sig: `subscribeTo${exportName(s.message)}(onMessage: (msg: ${s.message}) => void): () => void;`,
+      sig: `subscribeTo${exportName(s.message)}(onMessage: (msg: ${s.message}) => void${
+        s.hasStamp ? ", options?: { dropOutOfOrder?: boolean }" : ""
+      }): () => void;`,
+      wire: s.hasStamp
+        ? `(cb, options) => ${exportName(s.message)}.subscribe(client, cb, options)`
+        : `(cb) => ${exportName(s.message)}.subscribe(client, cb)`,
     })),
     ...mediaStreams.map((s) => ({
       name: exportName(s.message),
       sig: `subscribeTo${exportName(s.message)}(onTrack: (track: MediaStreamTrack) => void): () => void;`,
+      wire: `(cb) => ${exportName(s.message)}.subscribe(client, cb)`,
     })),
   ];
   const usageDoc = clientMethods.length
@@ -343,7 +357,7 @@ export async function connectToSfu(
 ${clientMethods
   .map(
     (m) =>
-      `  client.subscribeTo${m.name} = (cb) => ${m.name}.subscribe(client, cb);`,
+      `  client.subscribeTo${m.name} = ${m.wire};`,
   )
   .join("\n")}${
     rpcServices.length

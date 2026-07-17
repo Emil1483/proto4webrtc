@@ -194,7 +194,9 @@ client.subscribeToTelemetryStream((msg) => {
 client.subscribeToCameraStream((track) => {
   videoEl.srcObject = new MediaStream([track]);
 });
-client.onProducerClosed(() => { /* robot went away */ });
+client.onProducerClosed(() => {
+  /* robot went away */
+});
 client.close();
 ```
 
@@ -252,22 +254,22 @@ endpoint with real `mediasoup-client`.
 
 ## Options reference
 
-| Option | Applies to | Meaning |
-|---|---|---|
-| `label` | both | Unique mediasoup producer label; consumers select by it |
-| `delivery` | data | `RELIABLE_ORDERED` (default; required for >64 KiB messages) or `UNRELIABLE` |
-| `backpressure` | data | `BUFFER_ALL` (default) or `DROP_IF_BUFFERED` (newest wins) |
-| `max_buffered_factor` | data | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2) |
-| `kind` | media | `VIDEO` or `AUDIO` |
-| `video_codec` | media | `VP8`, `VP9`, `H264`, or unset for router default |
-| `label` (rpc) | service | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
+| Option                | Applies to | Meaning                                                                                                         |
+| --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
+| `label`               | both       | Unique mediasoup producer label; consumers select by it                                                         |
+| `delivery`            | data       | `RELIABLE_ORDERED` (default; required for >64 KiB messages) or `UNRELIABLE`                                     |
+| `backpressure`        | data       | `BUFFER_ALL` (default) or `DROP_IF_BUFFERED` (newest wins)                                                      |
+| `max_buffered_factor` | data       | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2)                                          |
+| `kind`                | media      | `VIDEO` or `AUDIO`                                                                                              |
+| `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                               |
+| `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
 
 The plugins never read `options.proto` at generation time — protoc compiles
 annotations into the descriptors it hands them. The file only matters when
-*authoring* protofiles (BSR dep above, or the copy bundled in the pip
+_authoring_ protofiles (BSR dep above, or the copy bundled in the pip
 package).
 
-`proto4webrtc/options.proto` is resolved as an *import only* when generating
+`proto4webrtc/options.proto` is resolved as an _import only_ when generating
 Python — never compiled into a per-project `proto4webrtc/options_pb2.py`.
 That module already ships inside the `proto4webrtc` pip package itself
 (`python/proto4webrtc/options_pb2.py`, checked in, regenerated only when
@@ -317,7 +319,8 @@ All three packages (pip `proto4webrtc`, npm `proto4webrtc`, npm
 `python/pyproject.toml`, `ts/proto4webrtc/package.json`, and
 `ts/package.json` together before publishing.
 
-- Options module: `buf registry login`, then `buf push` from the repo root.
+- Options module: `buf registry login`, then `buf push --exclude-unnamed` from
+  the repo root (skips the unnamed example module, which cannot be pushed).
 - pip: `cd python && python -m build && twine upload dist/*`
 - npm: log in once with `npm login` (browser flow; check with `npm whoami`), then:
   - codegen plugin: `cd ts && npm publish`
