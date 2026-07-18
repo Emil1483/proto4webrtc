@@ -141,10 +141,10 @@ Pass `opt: [react]` to the plugin to additionally generate a React hook (see
 "React" under Use below):
 
 ```yaml
-  - local: protoc-gen-proto4webrtc-ts
-    out: src/gen
-    opt: [react]
-    strategy: all
+- local: protoc-gen-proto4webrtc-ts
+  out: src/gen
+  opt: [react]
+  strategy: all
 ```
 
 Hook `buf generate` into your `prepare` script so `npm install` / `npm ci`
@@ -304,6 +304,20 @@ keeps working across producer reconnects. Real WebRTC media/video consumption
 is unchanged — browsers still connect to `handleWSClient`'s signaling
 endpoint with real `mediasoup-client`.
 
+> ⚠️ If you use Next.js to host the SFU, please make sure your next.config.ts contains the following
+
+```ts
+const nextConfig: NextConfig = {
+  // mediasoup is a native lib; keep it external (don't bundle) and make sure its
+  // worker binary is copied into the standalone output (it's spawned by path,
+  // not require()'d, so tracing misses it otherwise).
+  serverExternalPackages: ["mediasoup"],
+  outputFileTracingIncludes: {
+    "/api/sfu": ["./node_modules/mediasoup/worker/out/**/*"],
+  },
+};
+```
+
 ## Multiple robot producers
 
 Nothing limits the SFU to a single robot process. It is one shared "room"
@@ -312,13 +326,13 @@ one robot — one pushing telemetry/media, one implementing configuration
 rpcs) can each run their own `Proto4WebrtcProducer` against the same
 signaling URL, and browsers see the union of their streams. Rpc routing
 stays clean automatically: each producer process consumes only the
-`"<label>/requests"` channels of the services *it* was handed, so a call to
+`"<label>/requests"` channels of the services _it_ was handed, so a call to
 `client.rpc.getMission()` is answered by whichever container implements the
 `mission` service.
 
 Two rules:
 
-- **Split the protos per process.** `Proto4WebrtcProducer` produces *every*
+- **Split the protos per process.** `Proto4WebrtcProducer` produces _every_
   stream declared in the generated `producers.py`, so each process must be
   generated from its own proto file (or file set) — telemetry streams in
   one, configuration services in another. If two processes share generated
@@ -330,8 +344,8 @@ Two rules:
   (the browser selects by label alone).
 
 When the producer processes' generated code can land on one `sys.path`
-(e.g. two ament_python packages in a colcon workspace), also keep the
-*Python package names* disjoint: pass `gen_package=` to `generate()`
+(e.g. two ament*python packages in a colcon workspace), also keep the
+\_Python package names* disjoint: pass `gen_package=` to `generate()`
 (`--gen-package` on the CLI) so each process gets its own wrapper package
 instead of two colliding `proto4webrtc_gen`s, and give the proto packages
 distinct top-level names (`rov` and `rov_config`, not `rov.streams` and
@@ -341,7 +355,7 @@ Consumer-side liveness is per label, not per process:
 `client.onProducerClosed((label) => ...)` reports which stream went away,
 and in React each `useSfu()` stream state carries `online` — so a browser
 can tell "telemetry container dropped" from "configurator dropped" by the
-labels each one owns. `robotOnline` is coarser — true while *any* producer
+labels each one owns. `robotOnline` is coarser — true while _any_ producer
 is online.
 
 The full setup — two ROS2 producer packages in one container
@@ -392,7 +406,7 @@ sfu.handleWSClient(client, request.url);
 Clients pass the token when connecting — browser:
 
 ```ts
-const client = await connectToSfu({ token });      // or useSfu({...}, { token })
+const client = await connectToSfu({ token }); // or useSfu({...}, { token })
 ```
 
 and robot (`token` also exposed as a ROS parameter in the example nodes):
@@ -477,21 +491,3 @@ npm --prefix ts/proto4webrtc install
 npm --prefix ts/proto4webrtc run typecheck
 npm --prefix ts/proto4webrtc test
 ```
-
-## Publishing
-
-All four packages (pip `proto4webrtc`, pip `proto4webrtc-codegen`, npm
-`proto4webrtc`, npm `protoc-gen-proto4webrtc-ts`) share one version number —
-bump `python/proto4webrtc/pyproject.toml`,
-`python/proto4webrtc_codegen/pyproject.toml` (including the
-`compiler` extra pin in the runtime's pyproject),
-`ts/proto4webrtc/package.json`, and `ts/proto4webrtc_codegen/package.json`
-together before publishing.
-
-- Options module: `buf registry login`, then `buf push --exclude-unnamed` from
-  the repo root (skips the unnamed example module, which cannot be pushed).
-- pip (each of `python/proto4webrtc` and `python/proto4webrtc_codegen`):
-  `python -m build && twine upload dist/*`
-- npm: log in once with `npm login` (browser flow; check with `npm whoami`), then:
-  - codegen plugin: `cd ts/proto4webrtc_codegen && npm publish`
-  - runtime (SFU + browser client): `cd ts/proto4webrtc && npm run build && npm test && npm publish`
