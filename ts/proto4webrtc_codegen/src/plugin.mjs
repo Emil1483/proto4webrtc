@@ -442,10 +442,11 @@ import { ${
 ${rpcServices.length ? 'import type { MessageInitShape } from "@bufbuild/protobuf";\n' : ""}\
 import {
   connectToSfu as proto4webrtcConnect,
+  type ConnectionState,
   type Proto4WebrtcClient,
   type Proto4WebrtcClientOptions,
 } from "proto4webrtc/client";
-export type { Proto4WebrtcClient, Proto4WebrtcClientOptions };
+export type { ConnectionState, Proto4WebrtcClient, Proto4WebrtcClientOptions };
 ${importBlocks.join("\n")}
 ${subscribableInterface}
 ${[...dataBlocks, ...mediaBlocks].join("\n\n")}
@@ -512,6 +513,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   connectToSfu,
+  type ConnectionState,
   type Proto4WebrtcClientOptions,
   type StreamsClient,
   ${importNames.join(",\n  ")},
@@ -536,7 +538,7 @@ ${resultBlocks}
   /** The connected typed client (rpc, media, raw subscribe), or null while connecting. */
   client: StreamsClient | null;
   /** Receive transport connection state ("new" until the first change). */
-  connectionState: string;
+  connectionState: ConnectionState;
   /** True while the SFU has at least one (data) producer — i.e. the robot is up. */
   robotOnline: boolean;
 }
@@ -558,7 +560,8 @@ export function useSfu(
   clientOptions?: Proto4WebrtcClientOptions,
 ): UseSfuResult {
   const [client, setClient] = useState<StreamsClient | null>(null);
-  const [connectionState, setConnectionState] = useState("new");
+  const [connectionState, setConnectionState] =
+    useState<ConnectionState>("new");
   const [robotOnline, setRobotOnline] = useState(false);
   const streamsRef = useRef(streams);
   streamsRef.current = streams;

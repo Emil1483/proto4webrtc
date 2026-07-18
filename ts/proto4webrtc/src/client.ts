@@ -25,10 +25,13 @@ import {
   RpcResponseSchema,
 } from "./gen/proto4webrtc/rpc_pb.js";
 
+/** Receive transport connection state (mediasoup-client's ConnectionState). */
+export type ConnectionState = types.ConnectionState;
+
 export interface Proto4WebrtcClientOptions {
   /** Signaling WebSocket URL. Default: ws(s)://<location.host>/api/sfu */
   url?: string;
-  onConnectionState?: (state: string) => void;
+  onConnectionState?: (state: ConnectionState) => void;
 }
 
 interface Envelope {
@@ -50,9 +53,9 @@ export class Proto4WebrtcClient {
   private eventHandlers = new Set<(msg: Envelope) => void>();
   private device = new Device();
   private recvTransport!: types.Transport;
-  private onConnectionState?: (state: string) => void;
+  private onConnectionState?: (state: ConnectionState) => void;
 
-  private constructor(url: string, onConnectionState?: (state: string) => void) {
+  private constructor(url: string, onConnectionState?: (state: ConnectionState) => void) {
     this.onConnectionState = onConnectionState;
     this.ws = new WebSocket(url);
     this.ws.onmessage = (e) => {
