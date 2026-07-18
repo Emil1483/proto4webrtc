@@ -29,7 +29,7 @@ TelemetryStream.attach(dataConsumer, (msg) => console.log(msg.value0));
 ```
 
 Pass `opt: [react]` to also generate `proto4webrtc_react.ts` — a `useSfu()`
-hook exposing every data stream as a `{ hz, latest }` state updated at
+hook exposing every data stream as a `{ hz, latest, online }` state updated at
 animation-frame rate:
 
 ```tsx

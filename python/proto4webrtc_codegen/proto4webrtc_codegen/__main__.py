@@ -17,9 +17,25 @@ def main():
         "bundled and added automatically if absent)",
     )
     parser.add_argument("--out", required=True, help="output directory")
+    parser.add_argument(
+        "--include",
+        action="append",
+        help="glob relative to the roots (repeatable, e.g. rov/streams/*.proto); "
+        "compile only matching files — for producer processes that own a "
+        "subset of the streams",
+    )
+    parser.add_argument(
+        "--gen-package",
+        default="proto4webrtc_gen",
+        help="name of the generated wrapper package (default proto4webrtc_gen); "
+        "give each producer package its own name when several land on one "
+        "sys.path",
+    )
     args = parser.parse_args()
 
-    for path in generate(args.proto, args.out):
+    for path in generate(
+        args.proto, args.out, include=args.include, gen_package=args.gen_package
+    ):
         print(f"wrote {path}")
 
 

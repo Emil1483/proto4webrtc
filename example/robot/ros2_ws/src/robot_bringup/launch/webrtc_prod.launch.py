@@ -28,5 +28,12 @@ def generate_launch_description():
                 respawn=True,
                 respawn_delay=2.0,
             ),
+            Node(
+                package="webrtc_configurator_pkg",
+                executable="webrtc_configurator_node",
+                parameters=[{"signaling_url": signaling_url}],
+                respawn=True,
+                respawn_delay=2.0,
+            ),
         ]
     )

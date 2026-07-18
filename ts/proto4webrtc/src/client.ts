@@ -13,7 +13,7 @@
 //     client.subscribe("telemetry", (data) => { ... });        // raw bytes
 //     TelemetryStream.subscribe(client, (msg) => { ... });     // typed (generated)
 //     CameraStream.subscribe(client, (track) => { ... });      // media track
-//     client.onProducerClosed(() => { ... });
+//     client.onProducerClosed((label) => { ... });
 //     client.close();
 
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
@@ -51,6 +51,9 @@ export class Proto4WebrtcClient {
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
   private eventHandlers = new Set<(msg: Envelope) => void>();
+  // producerId/dataProducerId -> label, so close events (which only carry the
+  // id) can be reported per label. Media producers carry theirs in appData.
+  private producerLabels = new Map<string, string | undefined>();
   private device = new Device();
   private recvTransport!: types.Transport;
   private onConnectionState?: (state: ConnectionState) => void;
@@ -66,9 +69,26 @@ export class Proto4WebrtcClient {
         if (msg.ok) p.resolve(msg.data);
         else p.reject(new Error(msg.error ?? "rpc error"));
       } else if (msg.event) {
+        this.trackLabel(msg);
         for (const handler of this.eventHandlers) handler(msg);
+        if (msg.event === "producerClosed" || msg.event === "dataProducerClosed")
+          this.producerLabels.delete(
+            (msg.producerId ?? msg.dataProducerId) as string,
+          );
       }
     };
+  }
+
+  private trackLabel(msg: Envelope): void {
+    if (msg.event === "newProducer") {
+      const appData = msg.appData as { label?: string } | undefined;
+      this.producerLabels.set(msg.producerId as string, appData?.label);
+    } else if (msg.event === "newDataProducer") {
+      this.producerLabels.set(
+        msg.dataProducerId as string,
+        msg.label as string | undefined,
+      );
+    }
   }
 
   /** Connect, load the Device, and create the receive transport. */
@@ -107,6 +127,21 @@ export class Proto4WebrtcClient {
     client.recvTransport.on("connectionstatechange", (state) =>
       client.onConnectionState?.(state),
     );
+
+    // Seed the id->label map with producers already online, so a close event
+    // can be reported per label even for producers no stream subscribed to.
+    client
+      .request<{
+        producers: { producerId: string; appData?: { label?: string } }[];
+        dataProducers: { dataProducerId: string; label?: string }[];
+      }>("getProducers")
+      .then((list) => {
+        for (const p of list.producers)
+          client.producerLabels.set(p.producerId, p.appData?.label);
+        for (const dp of list.dataProducers)
+          client.producerLabels.set(dp.dataProducerId, dp.label);
+      })
+      .catch(() => {});
     return client;
   }
 
@@ -342,11 +377,20 @@ export class Proto4WebrtcClient {
     return () => this.eventHandlers.delete(handler);
   }
 
-  /** Fires whenever any producer or data producer goes away. */
-  onProducerClosed(cb: () => void): () => void {
+  /**
+   * Fires whenever any producer or data producer goes away, with the closed
+   * producer's label (undefined if it was never seen — e.g. a media producer
+   * without a label in appData, or a race right after connecting). With
+   * multiple robot processes behind one SFU, filter by label to track each
+   * process's liveness independently; rpc request channels from other
+   * browsers show up as "<service label>/requests".
+   */
+  onProducerClosed(cb: (label?: string) => void): () => void {
     const handler = (msg: Envelope) => {
-      if (msg.event === "producerClosed" || msg.event === "dataProducerClosed")
-        cb();
+      if (msg.event === "producerClosed" || msg.event === "dataProducerClosed") {
+        const id = (msg.producerId ?? msg.dataProducerId) as string;
+        cb(this.producerLabels.get(id));
+      }
     };
     this.eventHandlers.add(handler);
     return () => this.eventHandlers.delete(handler);

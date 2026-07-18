@@ -1,0 +1,59 @@
+// Configuration protos — a SECOND producer process on the robot.
+//
+// The telemetry streamer (webrtc_streamer_pkg) generates from rov/streams +
+// rov/rpc; the configurator (webrtc_configurator_pkg) generates from this
+// file only. Each process produces exactly the streams it owns, both connect
+// to the same SFU, and browsers see the union. Labels stay globally unique
+// across all processes.
+//
+// Top-level package rov_config (not rov.config) on purpose: both ROS
+// packages' generated code lands on one sys.path, and two regular Python
+// packages both named `rov` would shadow each other.
+
+syntax = "proto3";
+
+package rov_config;
+
+import "proto4webrtc/options.proto";
+
+// 1 Hz heartbeat from the configurator process. Doubles as its liveness
+// signal in the GUI (the "mission_status" label is online while the
+// configurator node runs, independent of the telemetry streamer).
+message MissionStatus {
+  option (proto4webrtc.data_stream) = {
+    label: "mission_status"
+    delivery: RELIABLE_ORDERED
+    backpressure: DROP_IF_BUFFERED // only the newest heartbeat matters
+  };
+
+  // Send time, seconds since epoch.
+  double stamp = 1;
+
+  // The mission currently configured (see the Configurator service).
+  Mission mission = 2;
+
+  // Seconds since the configurator process started.
+  double uptime = 3;
+}
+
+message Mission {
+  string name = 1;
+  // Waypoint depth targets, meters. Stands in for real mission structure.
+  repeated float depths = 2;
+  // Bumped by every UpdateMission.
+  uint32 revision = 3;
+}
+
+message GetMissionRequest {}
+
+message UpdateMissionRequest {
+  string name = 1;
+  repeated float depths = 2;
+}
+
+service Configurator {
+  option (proto4webrtc.rpc_service) = {label: "configurator"};
+
+  rpc GetMission(GetMissionRequest) returns (Mission);
+  rpc UpdateMission(UpdateMissionRequest) returns (Mission);
+}

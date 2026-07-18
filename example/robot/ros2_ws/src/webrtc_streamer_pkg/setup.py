@@ -11,8 +11,18 @@ package_name = 'webrtc_streamer_pkg'
 # bundled with the pip package and added to the include path automatically.
 # The generated top-level packages (rov, proto4webrtc, proto4webrtc_gen) land
 # next to webrtc_streamer_pkg/ and are picked up by find_packages() below.
+#
+# include: this process owns only the telemetry/media streams and the
+# RovControl rpc — rov_config belongs to webrtc_configurator_pkg. The
+# producer runtime produces every stream in its generated code, so
+# generating from the full proto root here would duplicate the
+# configurator's streams.
 _here = Path(__file__).resolve().parent
-generate(proto_dirs=[_here.parents[3] / 'proto'], out_dir=_here)
+generate(
+    proto_dirs=[_here.parents[3] / 'proto'],
+    out_dir=_here,
+    include=['rov/streams/*.proto', 'rov/rpc/*.proto'],
+)
 
 setup(
     name=package_name,

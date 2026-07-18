@@ -48,10 +48,21 @@ def bundled_options_include() -> str:
     return str(resources.files("proto4webrtc_codegen") / "proto")
 
 
-def generate(proto_dirs, out_dir) -> list[Path]:
+def generate(proto_dirs, out_dir, include=None, gen_package=GEN_PACKAGE) -> list[Path]:
     """Compile every .proto under the given root(s) into out_dir.
 
     proto_dirs: one dir or a list of dirs; each is a protoc include root.
+    include: optional list of glob patterns (relative to the roots, e.g.
+        "rov/streams/*.proto"); when given, only matching files are compiled.
+        The producer runtime produces *every* stream in the generated code,
+        so a process that should own only a subset of the streams (several
+        producer processes behind one SFU) must generate from that subset.
+        Non-matching files remain importable via the include path.
+    gen_package: name of the generated wrapper package (default
+        "proto4webrtc_gen"). Give each producer package its own name when
+        several of them can land on one sys.path (e.g. two ament_python
+        packages in one colcon workspace) — same-named regular packages
+        shadow each other.
     Returns the extra files written beside protoc's own output.
     """
     from grpc_tools import protoc
@@ -65,6 +76,17 @@ def generate(proto_dirs, out_dir) -> list[Path]:
     proto_files = sorted(
         str(p.relative_to(d)) for d in proto_dirs for p in d.rglob("*.proto")
     )
+    if include is not None:
+        from fnmatch import fnmatch
+
+        patterns = [include] if isinstance(include, str) else list(include)
+        proto_files = [
+            f for f in proto_files if any(fnmatch(f, pat) for pat in patterns)
+        ]
+        if not proto_files:
+            raise FileNotFoundError(
+                f"no .proto files under {proto_dirs} match {patterns}"
+            )
     if not proto_files:
         raise FileNotFoundError(f"no .proto files under {proto_dirs}")
     if len(set(proto_files)) != len(proto_files):
@@ -109,7 +131,7 @@ def generate(proto_dirs, out_dir) -> list[Path]:
         fdset, set(proto_files)
     )
 
-    gen_dir = out_dir / GEN_PACKAGE
+    gen_dir = out_dir / gen_package
     gen_dir.mkdir(exist_ok=True)
     (gen_dir / "__init__.py").write_text(INIT_CONTENT)
     producers = gen_dir / "producers.py"

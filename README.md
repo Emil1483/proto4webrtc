@@ -210,8 +210,8 @@ client.subscribeToTelemetryStream((msg) => {
 client.subscribeToCameraStream((track) => {
   videoEl.srcObject = new MediaStream([track]);
 });
-client.onProducerClosed(() => {
-  /* robot went away */
+client.onProducerClosed((label) => {
+  /* a producer went away — label tells you which stream/process */
 });
 client.close();
 ```
@@ -238,8 +238,9 @@ DataConsumer) and `decode()` remain available for manual wiring.
 With `opt: [react]`, `useSfu()` (generated into `proto4webrtc_react.ts`)
 wraps the whole lifecycle in one hook. Pass an options object per label to
 subscribe to it; every declared data-stream label comes back as a
-`{ hz, latest }` state, updated inside a single `requestAnimationFrame` loop
-(so a 100 Hz stream re-renders at display rate, not message rate):
+`{ hz, latest, online }` state, updated inside a single
+`requestAnimationFrame` loop (so a 100 Hz stream re-renders at display rate,
+not message rate):
 
 ```tsx
 import { useSfu } from "./gen/proto4webrtc_react";
@@ -252,13 +253,18 @@ const { telemetry, client, connectionState, robotOnline } = useSfu({
 });
 // telemetry.latest — newest Telemetry (undefined before the first one)
 // telemetry.hz     — messages received in the last second
+// telemetry.online — a "telemetry" producer is registered at the SFU
 // connectionState  — receive transport state ("new", "connected", ...)
 // robotOnline      — true while the SFU has at least one producer
+// onlineLabels     — every label currently produced ("<service>/responses"
+//                    online means the rpc service is being served)
 
 const { pointcloud } = useSfu({ pointcloud: {} }); // only "pointcloud" is consumed
 ```
 
-Unsubscribed labels stay at `hz: 0` / `latest: undefined`. `forceInOrder` is
+Unsubscribed labels stay at `hz: 0` / `latest: undefined` — but their
+`online` still tracks the producer, so a label can be watched for liveness
+without consuming its messages. `forceInOrder` is
 only offered for messages with a scalar `stamp` field. Media tracks and rpc
 go through the returned `client` (a `StreamsClient`, `null` while
 connecting).
@@ -297,6 +303,55 @@ browser, no WebRTC. Safe to call before the matching producer connects, and
 keeps working across producer reconnects. Real WebRTC media/video consumption
 is unchanged — browsers still connect to `handleWSClient`'s signaling
 endpoint with real `mediasoup-client`.
+
+## Multiple robot producers
+
+Nothing limits the SFU to a single robot process. It is one shared "room"
+keyed by stream label: several producer processes (e.g. two containers on
+one robot — one pushing telemetry/media, one implementing configuration
+rpcs) can each run their own `Proto4WebrtcProducer` against the same
+signaling URL, and browsers see the union of their streams. Rpc routing
+stays clean automatically: each producer process consumes only the
+`"<label>/requests"` channels of the services *it* was handed, so a call to
+`client.rpc.getMission()` is answered by whichever container implements the
+`mission` service.
+
+Two rules:
+
+- **Split the protos per process.** `Proto4WebrtcProducer` produces *every*
+  stream declared in the generated `producers.py`, so each process must be
+  generated from its own proto file (or file set) — telemetry streams in
+  one, configuration services in another. If two processes share generated
+  code, both produce the same labels and consumers receive every message
+  twice. One proto root can serve all processes: restrict each generation
+  with `--include` (CLI) / `include=` (`generate()`) globs, e.g.
+  `python -m proto4webrtc_codegen --proto protos --include 'rov/config/*.proto' --out out/`.
+- **Labels stay globally unique** across all processes connected to one SFU
+  (the browser selects by label alone).
+
+When the producer processes' generated code can land on one `sys.path`
+(e.g. two ament_python packages in a colcon workspace), also keep the
+*Python package names* disjoint: pass `gen_package=` to `generate()`
+(`--gen-package` on the CLI) so each process gets its own wrapper package
+instead of two colliding `proto4webrtc_gen`s, and give the proto packages
+distinct top-level names (`rov` and `rov_config`, not `rov.streams` and
+`rov.config`) — same-named regular Python packages shadow each other.
+
+Consumer-side liveness is per label, not per process:
+`client.onProducerClosed((label) => ...)` reports which stream went away,
+and in React each `useSfu()` stream state carries `online` — so a browser
+can tell "telemetry container dropped" from "configurator dropped" by the
+labels each one owns. `robotOnline` is coarser — true while *any* producer
+is online.
+
+The full setup — two ROS2 producer packages in one container
+(`webrtc_streamer_pkg` + `webrtc_configurator_pkg`), and a GUI homescreen
+showing per-process liveness — lives in [`example/`](example/README.md).
+
+One caveat for rpcs like `restartContainers()` that restart the very
+process serving them: schedule the restart (e.g. `asyncio.get_event_loop()
+.call_later(...)` or a detached docker call) and return first, or the
+response never leaves the dying process and the browser sees a timeout.
 
 ## Options reference
 

@@ -103,9 +103,14 @@ const client = await connectToSfu({
 
 const stop = client.subscribe("telemetry", (data) => { /* raw Uint8Array */ });
 client.onMedia("video", (track) => { videoEl.srcObject = new MediaStream([track]); });
-client.onProducerClosed(() => { /* a producer went away */ });
+client.onProducerClosed((label) => { /* a producer went away */ });
 client.close();
 ```
+
+`onProducerClosed` receives the closed producer's label — with several robot
+processes behind one SFU, filter by label to track each process's liveness
+independently (`label` is `undefined` when it was never announced, and other
+browsers' rpc request channels appear as `"<service label>/requests"`).
 
 `subscribe()`/`onMedia()` cover the producer already online at call time and
 any that (re)appears later, and create consumers only for what was asked —

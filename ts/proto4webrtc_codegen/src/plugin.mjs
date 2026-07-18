@@ -156,7 +156,7 @@ function generate(request, { react = false } = {}) {
     },
   ];
   if (react && dataStreams.length) {
-    const reserved = ["client", "connectionState", "robotOnline"];
+    const reserved = ["client", "connectionState", "robotOnline", "onlineLabels"];
     const clash = dataStreams.find((s) => reserved.includes(s.label));
     if (clash)
       throw new GenError(
@@ -232,8 +232,11 @@ function render(dataStreams, mediaStreams, rpcServices) {
       lastStamp = msg.stamp;
       onMessage(msg);
     });
-    const unwatch = sfu.onProducerClosed?.(() => {
-      lastStamp = -Infinity;
+    const unwatch = sfu.onProducerClosed?.((closedLabel) => {
+      // Only this stream's producer restarting resets the clock; an unknown
+      // label (old SFU / race) resets too, to stay safe.
+      if (closedLabel === undefined || closedLabel === this.label)
+        lastStamp = -Infinity;
     });
     return () => {
       unsubscribe();
@@ -406,7 +409,7 @@ ${clientMethods
   // Present on the browser Proto4WebrtcClient; used to reset stale-message
   // tracking when a producer restarts. Optional so the in-process
   // Proto4WebrtcSfu (ordered delivery, no reset needed) still satisfies this.
-  onProducerClosed?(cb: () => void): () => void;
+  onProducerClosed?(cb: (label?: string) => void): () => void;
 }\n`
       : "") +
     (mediaStreams.length
@@ -526,6 +529,13 @@ export interface StreamState<M> {
   hz: number;
   /** Newest message, or undefined before the first one arrives. */
   latest: M | undefined;
+  /**
+   * True while a producer for this label is registered at the SFU, whether
+   * or not it is subscribed here. With multiple robot processes behind one
+   * SFU, this tracks the liveness of whichever process owns the label
+   * (robotOnline only says "at least one producer, any label").
+   */
+  online: boolean;
 }
 
 /** Per-label subscription options; a label's presence subscribes it. */
@@ -541,6 +551,13 @@ ${resultBlocks}
   connectionState: ConnectionState;
   /** True while the SFU has at least one (data) producer — i.e. the robot is up. */
   robotOnline: boolean;
+  /**
+   * Every label currently produced at the SFU — declared streams, but also
+   * rpc channels ("<service>/responses" online = the service is being
+   * served) and anything a future producer adds. Per-stream \`online\` is
+   * derived from this set.
+   */
+  onlineLabels: ReadonlySet<string>;
 }
 
 type StreamLabel = ${labelUnion};
@@ -553,7 +570,13 @@ const LABELS = Object.keys(STREAMS) as StreamLabel[];
 const HZ_WINDOW_MS = 1000;
 
 type Buffers = Record<StreamLabel, { latest: unknown; times: number[] }>;
-type StreamStates = Omit<UseSfuResult, "client" | "connectionState" | "robotOnline">;
+// Internal per-label state; \`online\` is tracked separately (event-driven,
+// not frame-driven) and merged into the returned StreamStates.
+type MessageStates = Record<StreamLabel, { hz: number; latest: unknown }>;
+type StreamStates = Omit<
+  UseSfuResult,
+  "client" | "connectionState" | "robotOnline" | "onlineLabels"
+>;
 
 export function useSfu(
   streams: UseSfuStreams = {},
@@ -563,6 +586,9 @@ export function useSfu(
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("new");
   const [robotOnline, setRobotOnline] = useState(false);
+  const [onlineLabels, setOnlineLabels] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const streamsRef = useRef(streams);
   streamsRef.current = streams;
 
@@ -594,22 +620,35 @@ export function useSfu(
     };
   }, []);
 
-  // Robot presence: any producer registered at the SFU. Re-checked on every
-  // producer appear/close event.
+  // Producer presence: robotOnline = any producer registered at the SFU;
+  // onlineLabels = the set of labels currently produced (media labels ride
+  // in appData). Re-checked on every producer appear/close event.
   useEffect(() => {
     if (!client) {
       setRobotOnline(false);
+      setOnlineLabels(new Set());
       return;
     }
     let stale = false;
     const refresh = () => {
       client
-        .request<{ producers: unknown[]; dataProducers: unknown[] }>(
-          "getProducers",
-        )
+        .request<{
+          producers: { appData?: { label?: string } }[];
+          dataProducers: { label?: string }[];
+        }>("getProducers")
         .then((list) => {
-          if (!stale)
-            setRobotOnline(list.producers.length + list.dataProducers.length > 0);
+          if (stale) return;
+          setRobotOnline(list.producers.length + list.dataProducers.length > 0);
+          const labels = new Set<string>();
+          for (const p of list.producers)
+            if (p.appData?.label) labels.add(p.appData.label);
+          for (const dp of list.dataProducers)
+            if (dp.label) labels.add(dp.label);
+          setOnlineLabels((prev) =>
+            prev.size === labels.size && [...labels].every((l) => prev.has(l))
+              ? prev
+              : labels,
+          );
         })
         .catch(() => {});
     };
@@ -666,18 +705,18 @@ export function useSfu(
     return () => unsubs.forEach((u) => u());
   }, [client, subKey]);
 
-  const [state, setState] = useState<StreamStates>(
+  const [state, setState] = useState<MessageStates>(
     () =>
       Object.fromEntries(
         LABELS.map((l) => [l, { hz: 0, latest: undefined }]),
-      ) as unknown as StreamStates,
+      ) as unknown as MessageStates,
   );
   useEffect(() => {
     let raf = 0;
     const tick = () => {
       const now = performance.now();
       setState((prev) => {
-        let next: StreamStates | null = null;
+        let next: MessageStates | null = null;
         for (const label of LABELS) {
           const buf = buffers.current![label];
           while (buf.times.length && now - buf.times[0] >= HZ_WINDOW_MS)
@@ -696,7 +735,10 @@ export function useSfu(
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  return { ...state, client, connectionState, robotOnline };
+  const streamStates = Object.fromEntries(
+    LABELS.map((l) => [l, { ...state[l], online: onlineLabels.has(l) }]),
+  ) as unknown as StreamStates;
+  return { ...streamStates, client, connectionState, robotOnline, onlineLabels };
 }
 `;
 }
