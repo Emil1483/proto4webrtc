@@ -33,7 +33,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^10.6.0",
     "eslint-config-next": "16.2.9",
-    "protoc-gen-proto4webrtc-ts": "file:../../ts",
+    "protoc-gen-proto4webrtc-ts": "file:../../ts/proto4webrtc_codegen",
     "typescript": "^6.0.3"
   }
 }

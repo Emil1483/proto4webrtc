@@ -1,12 +1,13 @@
 # proto4webrtc (Python)
 
-Generates typed [mediasoup](https://mediasoup.org/) **producer** code
-(pymediasoup) from protobuf messages annotated with `proto4webrtc` options.
-The TypeScript **consumer** counterpart is the npm package
+Typed [mediasoup](https://mediasoup.org/) **producer** runtime (pymediasoup)
+for code generated from protobuf messages annotated with `proto4webrtc`
+options. The TypeScript **consumer** counterpart is the npm package
 `protoc-gen-proto4webrtc-ts`.
 
 ```sh
-pip install proto4webrtc
+pip install proto4webrtc              # runtime only (ship this)
+pip install proto4webrtc[compiler]    # + the code generator (build time)
 python -m proto4webrtc_codegen --proto path/to/protos --out out/
 ```
 
@@ -23,7 +24,8 @@ client.telemetry.send(Telemetry(stamp=time.time(), value0=0.4))
 setup, and the reconnect loop. `send()`/`push()` are safe to call from any
 thread, anytime (a no-op before the first connection).
 
-Also installs the raw protoc plugin `protoc-gen-proto4webrtc_python`
-(`--proto4webrtc_python_out`).
+The generator lives in the separate distribution `proto4webrtc-codegen`
+(pulled in by the `[compiler]` extra), so production images can install the
+runtime alone.
 
 Full docs: https://github.com/Emil1483/proto4webrtc

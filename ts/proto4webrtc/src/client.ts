@@ -324,6 +324,21 @@ export class Proto4WebrtcClient {
     return this.sendTransportPromise;
   }
 
+  /** Fires whenever any producer or data producer appears or goes away. */
+  onProducersChanged(cb: () => void): () => void {
+    const handler = (msg: Envelope) => {
+      if (
+        msg.event === "newProducer" ||
+        msg.event === "newDataProducer" ||
+        msg.event === "producerClosed" ||
+        msg.event === "dataProducerClosed"
+      )
+        cb();
+    };
+    this.eventHandlers.add(handler);
+    return () => this.eventHandlers.delete(handler);
+  }
+
   /** Fires whenever any producer or data producer goes away. */
   onProducerClosed(cb: () => void): () => void {
     const handler = (msg: Envelope) => {

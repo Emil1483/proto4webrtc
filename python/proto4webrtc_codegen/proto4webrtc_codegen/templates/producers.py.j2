@@ -42,6 +42,10 @@ class {{ s.class_name }}(DataProducerBase):
     LABEL = "{{ s.label }}"
     Message = {{ s.message }}
 
+    def send(self, msg: {{ s.message }}) -> bool | None:
+        """Encode and send one {{ s.message }} (see DataProducerBase.send)."""
+        return super().send(msg)
+
     def _produce_kwargs(self) -> dict:
         return {{ s.produce_kwargs }}
 

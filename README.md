@@ -3,8 +3,9 @@
 Define your WebRTC data/media streams once in protobuf, generate typed
 [mediasoup](https://mediasoup.org/) code for both ends:
 
-- **Python producer** (robot / backend, [pymediasoup](https://github.com/skymaze/pymediasoup)) — pip package [`proto4webrtc`](https://pypi.org/project/proto4webrtc/)
-- **TypeScript consumer** (browser, [mediasoup-client](https://www.npmjs.com/package/mediasoup-client)) — npm package [`protoc-gen-proto4webrtc-ts`](https://www.npmjs.com/package/protoc-gen-proto4webrtc-ts)
+- **Python producer runtime** (robot / backend, [pymediasoup](https://github.com/skymaze/pymediasoup)) — pip package [`proto4webrtc`](https://pypi.org/project/proto4webrtc/) (`python/proto4webrtc`)
+- **Python code generator** — pip package [`proto4webrtc-codegen`](https://pypi.org/project/proto4webrtc-codegen/) (`python/proto4webrtc_codegen`), pulled in by `pip install proto4webrtc[compiler]`
+- **TypeScript consumer generator** (browser, [mediasoup-client](https://www.npmjs.com/package/mediasoup-client)) — npm package [`protoc-gen-proto4webrtc-ts`](https://www.npmjs.com/package/protoc-gen-proto4webrtc-ts) (`ts/proto4webrtc_codegen`)
 - **TypeScript SFU runtime** (server, [mediasoup](https://mediasoup.org/)) — npm package [`proto4webrtc`](https://www.npmjs.com/package/proto4webrtc) (`ts/proto4webrtc`)
 
 Both are standard protoc plugins, so they compose with protoc or
@@ -78,7 +79,7 @@ buf dep update
 ### Python producers
 
 ```sh
-pip install proto4webrtc
+pip install proto4webrtc[compiler]   # runtime + generator; plain `proto4webrtc` is runtime-only
 python -m proto4webrtc_codegen --proto path/to/protos --out out/
 ```
 
@@ -92,7 +93,11 @@ Output in `out/`:
 - `<your packages>/*_pb2.py` (+ `.pyi`) — protobuf message classes
 - `proto4webrtc_gen/producers.py` — the mediasoup producer wrappers
 
-Prefer raw protoc? The pip package also installs the plugin executable.
+The generator ships as its own distribution (`proto4webrtc-codegen`), so
+production images can install just the runtime: generated code only needs
+`pip install proto4webrtc`.
+
+Prefer raw protoc? The codegen package also installs the plugin executable.
 Note `proto4webrtc/options.proto` is **not** a positional target below —
 only `-I`-resolved as an import, so protoc doesn't generate a competing
 `proto4webrtc/options_pb2.py` (see Options reference below for why):
@@ -130,6 +135,17 @@ Output in `src/gen/`:
 
 - `<your packages>/*_pb.ts` — protobuf-es message classes
 - `proto4webrtc.ts` — the mediasoup consumer wrappers
+- `proto4webrtc_react.ts` — the `useSfu()` React hook (only with `opt: [react]`)
+
+Pass `opt: [react]` to the plugin to additionally generate a React hook (see
+"React" under Use below):
+
+```yaml
+  - local: protoc-gen-proto4webrtc-ts
+    out: src/gen
+    opt: [react]
+    strategy: all
+```
 
 Hook `buf generate` into your `prepare` script so `npm install` / `npm ci`
 regenerates.
@@ -217,6 +233,36 @@ field are deduplicated automatically: out-of-order (stale) messages are
 dropped before the callback. Lower-level `attach()` (raw mediasoup
 DataConsumer) and `decode()` remain available for manual wiring.
 
+### React (consumer side, browser)
+
+With `opt: [react]`, `useSfu()` (generated into `proto4webrtc_react.ts`)
+wraps the whole lifecycle in one hook. Pass an options object per label to
+subscribe to it; every declared data-stream label comes back as a
+`{ hz, latest }` state, updated inside a single `requestAnimationFrame` loop
+(so a 100 Hz stream re-renders at display rate, not message rate):
+
+```tsx
+import { useSfu } from "./gen/proto4webrtc_react";
+
+const { telemetry, client, connectionState, robotOnline } = useSfu({
+  telemetry: {
+    forceInOrder: true, // drop messages stamped older than `latest`
+    onMessage: (msg) => {}, // optional: every message, synchronously
+  },
+});
+// telemetry.latest — newest Telemetry (undefined before the first one)
+// telemetry.hz     — messages received in the last second
+// connectionState  — receive transport state ("new", "connected", ...)
+// robotOnline      — true while the SFU has at least one producer
+
+const { pointcloud } = useSfu({ pointcloud: {} }); // only "pointcloud" is consumed
+```
+
+Unsubscribed labels stay at `hz: 0` / `latest: undefined`. `forceInOrder` is
+only offered for messages with a scalar `stamp` field. Media tracks and rpc
+go through the returned `client` (a `StreamsClient`, `null` while
+connecting).
+
 ### TypeScript (SFU side, server)
 
 `npm install proto4webrtc`. `Proto4WebrtcSfu` is the whole server: signaling,
@@ -282,28 +328,30 @@ the other.
 ## Development
 
 ```sh
-# Python: editable install + generate from the example protos
-pip install -e python
+# Python: editable installs (runtime + codegen dists) + generate from the
+# example protos. Run pytest from inside each dist dir — from python/ itself
+# the dist dirs shadow the same-named packages.
+pip install -e python/proto4webrtc -e python/proto4webrtc_codegen
 python -m proto4webrtc_codegen --proto example/proto --out example/gen-py
 
 # Only after changing proto/proto4webrtc/*.proto — sync the copies bundled in
 # the codegen package and refresh the runtimes' checked-in compiled modules
-# (python/proto4webrtc/{options,rpc}_pb2.py and
+# (python/proto4webrtc/proto4webrtc/{options,rpc}_pb2.py and
 # ts/proto4webrtc/src/gen/proto4webrtc/rpc_pb.ts)
-cp proto/proto4webrtc/*.proto python/proto4webrtc_codegen/proto/proto4webrtc/
+cp proto/proto4webrtc/*.proto python/proto4webrtc_codegen/proto4webrtc_codegen/proto/proto4webrtc/
 python -c "
 from grpc_tools import protoc
 from importlib import resources
-protoc.main(['protoc', '-Ipython/proto4webrtc_codegen/proto',
+protoc.main(['protoc', '-Ipython/proto4webrtc_codegen/proto4webrtc_codegen/proto',
              '-I' + str(resources.files('grpc_tools') / '_proto'),
-             '--python_out=python', '--pyi_out=python',
+             '--python_out=python/proto4webrtc', '--pyi_out=python/proto4webrtc',
              'proto4webrtc/options.proto', 'proto4webrtc/rpc.proto'])
 "
-ts/node_modules/.bin/buf generate --path proto/proto4webrtc/rpc.proto \
-  --template '{"version":"v2","inputs":[{"directory":"proto"}],"plugins":[{"local":"ts/node_modules/.bin/protoc-gen-es","out":"ts/proto4webrtc/src/gen","opt":["target=ts"]}]}'
+ts/proto4webrtc_codegen/node_modules/.bin/buf generate --path proto/proto4webrtc/rpc.proto \
+  --template '{"version":"v2","inputs":[{"directory":"proto"}],"plugins":[{"local":"ts/proto4webrtc_codegen/node_modules/.bin/protoc-gen-es","out":"ts/proto4webrtc/src/gen","opt":["target=ts"]}]}'
 
 # TypeScript codegen plugin: deps + generate from the example protos
-npm --prefix ts install
+npm --prefix ts/proto4webrtc_codegen install
 buf generate --template example/buf.gen.yaml
 
 # TypeScript SFU runtime: install, typecheck, test
@@ -314,14 +362,18 @@ npm --prefix ts/proto4webrtc test
 
 ## Publishing
 
-All three packages (pip `proto4webrtc`, npm `proto4webrtc`, npm
-`protoc-gen-proto4webrtc-ts`) share one version number — bump
-`python/pyproject.toml`, `ts/proto4webrtc/package.json`, and
-`ts/package.json` together before publishing.
+All four packages (pip `proto4webrtc`, pip `proto4webrtc-codegen`, npm
+`proto4webrtc`, npm `protoc-gen-proto4webrtc-ts`) share one version number —
+bump `python/proto4webrtc/pyproject.toml`,
+`python/proto4webrtc_codegen/pyproject.toml` (including the
+`compiler` extra pin in the runtime's pyproject),
+`ts/proto4webrtc/package.json`, and `ts/proto4webrtc_codegen/package.json`
+together before publishing.
 
 - Options module: `buf registry login`, then `buf push --exclude-unnamed` from
   the repo root (skips the unnamed example module, which cannot be pushed).
-- pip: `cd python && python -m build && twine upload dist/*`
+- pip (each of `python/proto4webrtc` and `python/proto4webrtc_codegen`):
+  `python -m build && twine upload dist/*`
 - npm: log in once with `npm login` (browser flow; check with `npm whoami`), then:
-  - codegen plugin: `cd ts && npm publish`
+  - codegen plugin: `cd ts/proto4webrtc_codegen && npm publish`
   - runtime (SFU + browser client): `cd ts/proto4webrtc && npm run build && npm test && npm publish`

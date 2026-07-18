@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import NextLink from "next/link";
+import { useSfu } from "@/gen/proto4webrtc_react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -11,11 +12,6 @@ import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import {
-  connectToSfu,
-  type StreamsClient,
-  type Thrusters,
-} from "@/gen/proto4webrtc";
 
 const THRUSTER_COLORS = ["#42a5f5", "#66bb6a", "#ffa726", "#ef5350"];
 
@@ -66,75 +62,44 @@ function ThrusterBar({ index, value }: { index: number; value: number }) {
 }
 
 export default function Home() {
-  const [state, setState] = useState<string>("new");
-  const [values, setValues] = useState<number[]>([0, 0, 0, 0]);
-  const [hz, setHz] = useState(0);
-  const [robotOnline, setRobotOnline] = useState(false);
   const [light, setLight] = useState(0);
   const [pingMs, setPingMs] = useState<number | null>(null);
   const [rpcError, setRpcError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const clientRef = useRef<StreamsClient | null>(null);
 
-  const latestValues = useRef<number[]>([0, 0, 0, 0]);
-  const msgTimes = useRef<number[]>([]);
+  // telemetry.latest/.hz update at animation rate, decoupled from the
+  // 100 Hz stream; stale (out-of-order) messages are dropped by forceInOrder.
+  const { telemetry, client, connectionState, robotOnline } = useSfu({
+    telemetry: { forceInOrder: true },
+  });
+  const state = connectionState;
+  const msg = telemetry.latest;
+  const values = msg ? [msg.value0, msg.value1, msg.value2, msg.value3] : [0, 0, 0, 0];
+  const hz = telemetry.hz;
 
+  // Media still goes through the typed client.
   useEffect(() => {
-    let cancelled = false;
-    let client: StreamsClient | null = null;
-
-    // Stale (out-of-order) messages are dropped by subscribeToThrustersStream.
-    const handleTelemetry = (msg: Thrusters) => {
-      msgTimes.current.push(performance.now());
-      latestValues.current = [msg.value0, msg.value1, msg.value2, msg.value3];
-    };
-
-    (async () => {
-      client = await connectToSfu({ onConnectionState: setState });
-      if (cancelled) {
-        client.close();
-        return;
+    if (!client) return;
+    // Covers the robot whether it connected before or after this page.
+    const unsubMedia = client.subscribeToCameraStream((track) => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = new MediaStream([track]);
       }
-      clientRef.current = client;
-
-      // Covers the robot whether it connected before or after this page.
-      client.subscribeToCameraStream((track) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = new MediaStream([track]);
-        }
-        setRobotOnline(true);
-      });
-      client.subscribeToThrustersStream(handleTelemetry);
-      client.onProducerClosed(() => {
-        setRobotOnline(false);
-        if (videoRef.current) videoRef.current.srcObject = null;
-      });
-    })().catch((err) => console.error("[sfu] setup failed:", err));
-
-    // Render telemetry at animation rate, decoupled from the 100 Hz stream.
-    let raf = 0;
-    const tick = () => {
-      setValues([...latestValues.current]);
-      const now = performance.now();
-      msgTimes.current = msgTimes.current.filter((t) => now - t < 1000);
-      setHz(msgTimes.current.length);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-
+    });
+    const unsubClosed = client.onProducerClosed(() => {
+      if (videoRef.current) videoRef.current.srcObject = null;
+    });
     return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      clientRef.current = null;
-      client?.close();
+      unsubMedia();
+      unsubClosed();
     };
-  }, []);
+  }, [client]);
 
   // Rpc calls travel browser -> robot over WebRTC data channels; the typed
   // client.rpc.* methods are generated from the RovControl service.
   const sendLight = async (intensity: number) => {
     try {
-      const res = await clientRef.current?.rpc.setLight({ intensity });
+      const res = await client?.rpc.setLight({ intensity });
       if (res) setLight(res.intensity);
       setRpcError(null);
     } catch (err) {
@@ -144,7 +109,7 @@ export default function Home() {
   const sendPing = async () => {
     try {
       const start = performance.now();
-      await clientRef.current?.rpc.ping({ stamp: Date.now() / 1000 });
+      await client?.rpc.ping({ stamp: Date.now() / 1000 });
       setPingMs(performance.now() - start);
       setRpcError(null);
     } catch (err) {

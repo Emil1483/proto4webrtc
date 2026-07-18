@@ -1,0 +1,32 @@
+[project]
+name = "proto4webrtc-codegen"
+version = "1.2.0"
+description = "Generate mediasoup producer code (pymediasoup) from proto4webrtc-annotated protofiles"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Emil Djupvik" }]
+requires-python = ">=3.10"
+dependencies = [
+    "protobuf>=4.25",
+    "grpcio-tools>=1.60",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Repository = "https://github.com/Emil1483/proto4webrtc"
+
+[project.scripts]
+protoc-gen-proto4webrtc_python = "proto4webrtc_codegen.plugin:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["proto4webrtc_codegen*"]
+
+[tool.setuptools.package-data]
+proto4webrtc_codegen = ["templates/*.j2", "proto/proto4webrtc/*.proto"]

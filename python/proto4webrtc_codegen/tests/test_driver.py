@@ -14,7 +14,7 @@ from pathlib import Path
 
 from proto4webrtc_codegen.driver import generate
 
-EXAMPLE_PROTO = Path(__file__).resolve().parents[2] / "example" / "proto"
+EXAMPLE_PROTO = Path(__file__).resolve().parents[3] / "example" / "proto"
 
 
 def test_generate_does_not_write_a_proto4webrtc_directory(tmp_path):
@@ -30,6 +30,13 @@ def test_generated_streams_module_imports_options_from_the_real_runtime_package(
 
     source = (tmp_path / "rov" / "streams" / "thrusters_pb2.py").read_text()
     assert "from proto4webrtc import options_pb2" in source
+
+
+def test_generated_data_producers_have_typed_send(tmp_path):
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    assert "def send(self, msg: Thrusters) -> bool | None:" in source
 
 
 def test_generated_producers_include_rpc_service_base(tmp_path):

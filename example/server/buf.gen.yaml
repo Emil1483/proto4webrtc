@@ -20,4 +20,6 @@ plugins:
       - target=ts
   - local: protoc-gen-proto4webrtc-ts
     out: src/gen
+    opt:
+      - react # also emit src/gen/proto4webrtc_react.ts (useSfu hook)
     strategy: all # plugin aggregates all streams into one file

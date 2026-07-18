@@ -7,3 +7,5 @@ __pycache__
 src/webrtc_streamer_pkg/rov/
 src/webrtc_streamer_pkg/proto4webrtc/
 src/webrtc_streamer_pkg/proto4webrtc_gen/
+
+.venv

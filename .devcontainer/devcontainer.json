@@ -33,5 +33,5 @@
       }
     }
   },
-  "postCreateCommand": "rosdep update && rosdep install --from-paths /repo_root/example/robot/ros2_ws/src --ignore-src -r -y && poetry install -C /repo_root/example/robot/ros2_ws && npm --prefix /repo_root/example/server install"
+  "postCreateCommand": "rosdep update && rosdep install --from-paths /repo_root/example/robot/ros2_ws/src --ignore-src -r -y && poetry install -C /repo_root/example/robot/ros2_ws --no-root && npm --prefix /repo_root/example/server install"
 }

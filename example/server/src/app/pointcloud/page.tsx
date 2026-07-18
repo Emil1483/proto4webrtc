@@ -18,53 +18,32 @@ import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import {
-  connectToSfu,
-  type PointCloud,
-  type StreamsClient,
-} from "@/gen/proto4webrtc";
+import { useSfu } from "@/gen/proto4webrtc_react";
 
 export default function PointcloudPage() {
-  const [state, setState] = useState<string>("new");
-  const [hz, setHz] = useState(0);
-  const [pointCount, setPointCount] = useState(0);
-  const [robotOnline, setRobotOnline] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const points = useRef<Float32Array>(new Float32Array(0));
-  const msgTimes = useRef<number[]>([]);
   // Orbit camera. Yaw auto-spins until the user drags.
   const cam = useRef({ yaw: 0.6, pitch: 0.45, dist: 3.2, autoSpin: true });
 
+  // Subscribes ONLY to "pointcloud"; pointcloud.latest/.hz update at
+  // animation rate. Stale (out-of-order) clouds are dropped by forceInOrder.
+  const { pointcloud, connectionState, robotOnline } = useSfu({
+    pointcloud: { forceInOrder: true },
+  });
+  const state = connectionState;
+  const hz = pointcloud.hz;
+  // .slice() gives a fresh, 4-byte-aligned buffer so the Float32Array view
+  // over msg.data is always valid regardless of its source offset.
+  const points = pointcloud.latest
+    ? new Float32Array(pointcloud.latest.data.slice().buffer)
+    : new Float32Array(0);
+  const pointCount = robotOnline ? points.length / 3 : 0;
+
+  // Redraw at animation rate (auto-spin moves even without new clouds).
+  const pointsRef = useRef(points);
+  pointsRef.current = robotOnline ? points : new Float32Array(0);
   useEffect(() => {
-    let cancelled = false;
-    let client: StreamsClient | null = null;
-
-    // Stale (out-of-order) clouds are dropped by subscribeToPointCloudStream.
-    const handleCloud = (msg: PointCloud) => {
-      setRobotOnline(true);
-      msgTimes.current.push(performance.now());
-      // .slice() gives a fresh, 4-byte-aligned buffer so the Float32Array
-      // view over msg.data is always valid regardless of its source offset.
-      points.current = new Float32Array(msg.data.slice().buffer);
-    };
-
-    (async () => {
-      client = await connectToSfu({ onConnectionState: setState });
-      if (cancelled) {
-        client.close();
-        return;
-      }
-
-      // Covers the robot whether it connected before or after this page.
-      client.subscribeToPointCloudStream(handleCloud);
-      client.onProducerClosed(() => {
-        setRobotOnline(false);
-        points.current = new Float32Array(0);
-      });
-    })().catch((err) => console.error("[sfu] setup failed:", err));
-
-    // Render at animation rate, decoupled from the cloud arrival rate.
     let raf = 0;
     let prev = performance.now();
     const tick = () => {
@@ -74,20 +53,11 @@ export default function PointcloudPage() {
 
       const c = cam.current;
       if (c.autoSpin) c.yaw += 0.25 * dt;
-      draw(canvasRef.current, points.current, c.yaw, c.pitch, c.dist);
-
-      setPointCount(points.current.length / 3);
-      msgTimes.current = msgTimes.current.filter((t) => now - t < 1000);
-      setHz(msgTimes.current.length);
+      draw(canvasRef.current, pointsRef.current, c.yaw, c.pitch, c.dist);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      client?.close();
-    };
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   // Drag to orbit, wheel to zoom.
