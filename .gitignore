@@ -5,3 +5,4 @@ dist/
 example/gen-ts/
 example/gen-py/
 build/
+.venv/
