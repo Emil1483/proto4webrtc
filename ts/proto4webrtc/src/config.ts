@@ -13,6 +13,8 @@
 //                            default, e.g. "turn:1.2.3.4:3478?transport=udp"
 //   TURN_USERNAME            TURN username
 //   TURN_CREDENTIAL          TURN password
+//   PROTO4WEBRTC_AUTH_SECRET HS256 secret for signaling tokens; unset (and
+//                            no auth config given) disables auth entirely
 //
 // Explicit Proto4WebrtcSfuConfig values override the env-derived defaults
 // per top-level section.
@@ -20,6 +22,8 @@
 import os from "node:os";
 
 import type { types } from "mediasoup";
+
+import type { AuthConfig } from "./auth.js";
 
 export interface IceServer {
   urls: string;
@@ -38,6 +42,10 @@ export interface Proto4WebrtcSfuConfig {
   // TURN). Replaces the default wholesale, same as webRtcTransport — include
   // a STUN entry too if you still want one alongside your own TURN servers.
   iceServers?: IceServer[];
+  // Signaling authentication (see auth.ts). Default: HS256 JWT verification
+  // with PROTO4WEBRTC_AUTH_SECRET; auth is disabled (every peer full access)
+  // when neither a secret nor a verifyToken callback is configured.
+  auth?: AuthConfig;
 }
 
 // Exported for tests; apps normally rely on the module-level `defaultConfig`
@@ -98,6 +106,10 @@ export function buildDefaultConfig(
         credential: env.TURN_CREDENTIAL,
       })),
     ],
+
+    auth: {
+      secret: env.PROTO4WEBRTC_AUTH_SECRET,
+    },
   };
 }
 
@@ -148,5 +160,6 @@ export function resolveConfig(config?: Proto4WebrtcSfuConfig): Required<Proto4We
       ...config?.webRtcTransport,
     } as types.WebRtcTransportOptions),
     iceServers: config?.iceServers ?? defaultConfig.iceServers,
+    auth: { ...defaultConfig.auth, ...config?.auth },
   };
 }

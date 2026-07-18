@@ -64,6 +64,7 @@ def _data_context(s: DataStreamSpec) -> dict:
         "backpressure_doc": backpressure_doc,
         "drop": drop,
         "max_buffered_factor": s.max_buffered_factor,
+        "protected": s.protected,
     }
 
 
@@ -80,6 +81,7 @@ def _media_context(s: MediaStreamSpec) -> dict:
         "kind": s.kind,
         "clock_rate": _CLOCK_RATE_BY_KIND.get(s.kind, 90000),
         "codec_doc": codec_doc,
+        "protected": s.protected,
     }
 
 
@@ -92,6 +94,7 @@ def _rpc_context(s: RpcServiceSpec) -> dict:
             "request_ref": f"{_alias(m.input_proto_file)}.{m.input_message}",
             "response": m.output_message,
             "response_ref": f"{_alias(m.output_proto_file)}.{m.output_message}",
+            "protected": m.protected,
         }
         for m in s.methods
     ]

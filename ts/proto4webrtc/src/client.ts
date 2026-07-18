@@ -31,6 +31,13 @@ export type ConnectionState = types.ConnectionState;
 export interface Proto4WebrtcClientOptions {
   /** Signaling WebSocket URL. Default: ws(s)://<location.host>/api/sfu */
   url?: string;
+  /**
+   * Signaling auth token (JWT with a `role: "guest" | "admin"` claim),
+   * appended to the URL as `?token=`. Omit to connect as guest — when the
+   * SFU has auth enabled, guests can't consume protected streams or call
+   * protected rpc methods. An invalid token closes the socket (code 4401).
+   */
+  token?: string;
   onConnectionState?: (state: ConnectionState) => void;
 }
 
@@ -96,8 +103,9 @@ export class Proto4WebrtcClient {
     options: Proto4WebrtcClientOptions = {},
   ): Promise<Proto4WebrtcClient> {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const url =
-      options.url ?? `${proto}://${window.location.host}/api/sfu`;
+    let url = options.url ?? `${proto}://${window.location.host}/api/sfu`;
+    if (options.token)
+      url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(options.token)}`;
     const client = new Proto4WebrtcClient(url, options.onConnectionState);
     await new Promise<void>((resolve, reject) => {
       client.ws.onopen = () => resolve();

@@ -8,10 +8,11 @@ import * as mediasoup from "mediasoup";
 import type { types } from "mediasoup";
 import type { WebSocket } from "ws";
 
+import { resolveRole, tokenFromUrl, type AuthConfig, type Role, type TokenClaims, type VerifyToken } from "./auth.js";
 import { resolveConfig, type IceServer, type Proto4WebrtcSfuConfig } from "./config.js";
 import { PeerConnection } from "./peer.js";
 
-export type { IceServer, Proto4WebrtcSfuConfig };
+export type { AuthConfig, IceServer, Proto4WebrtcSfuConfig, Role, TokenClaims, VerifyToken };
 
 export interface Proto4WebrtcSfuStatus {
   ready: boolean;
@@ -79,9 +80,27 @@ export class Proto4WebrtcSfu {
     };
   }
 
-  /** Wire a raw `ws` WebSocket (e.g. next-ws's UPGRADE client) into the signaling protocol. */
-  handleWSClient(client: WebSocket): void {
-    const peer = new PeerConnection(this, client);
+  /**
+   * Wire a raw `ws` WebSocket (e.g. next-ws's UPGRADE client) into the
+   * signaling protocol. Pass the upgrade request's URL so the peer's
+   * `?token=` query parameter can be verified; with auth configured, no
+   * token means role "guest" and an invalid token closes the socket.
+   */
+  handleWSClient(client: WebSocket, requestUrl?: string): void {
+    const ready = resolveRole(this.config.auth, tokenFromUrl(requestUrl)).catch(
+      (err: unknown) => {
+        const reason = err instanceof Error ? err.message : "invalid token";
+        console.warn(`[proto4webrtc] rejecting peer: ${reason}`);
+        try {
+          client.send(JSON.stringify({ event: "authError", error: reason }));
+        } catch {
+          /* socket closing */
+        }
+        client.close(4401, "invalid token");
+        return undefined;
+      },
+    );
+    const peer = new PeerConnection(this, client, ready);
     client.on("message", (raw: unknown) => void peer.handle(raw));
     client.on("close", () => peer.close());
   }

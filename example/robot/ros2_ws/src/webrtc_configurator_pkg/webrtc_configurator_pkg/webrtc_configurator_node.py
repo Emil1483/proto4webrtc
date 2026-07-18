@@ -14,6 +14,7 @@ rov/streams + rov/rpc), so the two processes split the label namespace
 cleanly.
 """
 
+import os
 import threading
 
 import rclpy
@@ -71,8 +72,12 @@ class WebRtcConfiguratorNode(Node):
             self.get_parameter("signaling_url").get_parameter_value().string_value
         )
         self.configurator = Configurator(self)
+        # Robot auth token (JWT, role "robot"); empty disables auth.
+        self.declare_parameter("token", os.environ.get("PROTO4WEBRTC_TOKEN", ""))
+        token = self.get_parameter("token").get_parameter_value().string_value
         self.client = Proto4WebrtcProducer(
             signaling_url=signaling_url,
+            token=token or None,
             configurator=self.configurator,
             logger=self.get_logger(),
         )

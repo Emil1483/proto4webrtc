@@ -15,6 +15,7 @@ import fractions
 import json
 import logging
 import time
+import urllib.parse
 
 import websockets
 from aiortc import MediaStreamTrack
@@ -99,6 +100,8 @@ class DataProducerBase:
     """
 
     LABEL: str
+    # Admin-only stream: rides to the SFU in appData so it can deny guests.
+    PROTECTED: bool = False
 
     def __init__(self, client: "Proto4WebrtcClient"):
         self._client = client
@@ -111,7 +114,10 @@ class DataProducerBase:
         return True
 
     async def _attach(self, transport) -> None:
-        self._dp = await transport.produceData(label=self.LABEL, **self._produce_kwargs())
+        app_data = {"protected": True} if self.PROTECTED else {}
+        self._dp = await transport.produceData(
+            label=self.LABEL, appData=app_data, **self._produce_kwargs()
+        )
 
     def _detach(self) -> None:
         self._dp = None
@@ -151,6 +157,8 @@ class MediaProducerBase:
 
     LABEL: str
     KIND: str
+    # Admin-only stream: rides to the SFU in appData so it can deny guests.
+    PROTECTED: bool = False
 
     def __init__(self, client: "Proto4WebrtcClient", track: FrameTrack):
         self._client = client
@@ -158,8 +166,11 @@ class MediaProducerBase:
         self._producer = None
 
     async def _attach(self, transport) -> None:
+        app_data = {"label": self.LABEL}
+        if self.PROTECTED:
+            app_data["protected"] = True
         self._producer = await transport.produce(
-            track=self._track, stopTracks=False, appData={"label": self.LABEL}
+            track=self._track, stopTracks=False, appData=app_data
         )
 
     def _detach(self) -> None:
@@ -182,7 +193,8 @@ class RpcServiceBase:
     """
 
     LABEL: str
-    # wire method name -> (python method attr, request message class)
+    # wire method name -> (python method attr, request message class[, protected])
+    # The 2-tuple form (pre-auth generated code) means not protected.
     _METHODS: dict
 
     def __init__(self):
@@ -200,7 +212,7 @@ class RpcServiceBase:
     def _detach(self) -> None:
         self._response_dp = None
 
-    async def _handle_request(self, data: bytes, logger) -> None:
+    async def _handle_request(self, data: bytes, logger, role: str = "admin") -> None:
         try:
             req = RpcRequest.FromString(bytes(data))
         except Exception:
@@ -211,7 +223,12 @@ class RpcServiceBase:
             entry = self._METHODS.get(req.method)
             if entry is None:
                 raise ValueError(f"unknown method: {req.method}")
-            attr, request_cls = entry
+            attr, request_cls = entry[0], entry[1]
+            protected = entry[2] if len(entry) > 2 else False
+            # `role` is what the SFU stamped into the caller's requests
+            # channel from its verified token — not client-supplied.
+            if protected and role not in ("admin", "robot"):
+                raise PermissionError(f"permission denied: {req.method} is protected")
             result = await getattr(self, attr)(request_cls.FromString(req.payload))
             resp.payload = result.SerializeToString()
         except Exception as exc:  # any handler failure -> error response
@@ -237,8 +254,13 @@ class Proto4WebrtcClient:
         signaling_url: str,
         reconnect_delay: float = RECONNECT_DELAY_S,
         logger=None,
+        token: str | None = None,
     ):
         self.signaling_url = signaling_url
+        # Signaling auth token (JWT with role "robot"), sent as ?token= on
+        # the websocket URL. Required to produce streams when the SFU has
+        # auth enabled; None connects unauthenticated (auth-disabled SFUs).
+        self.token = token
         self.reconnect_delay = reconnect_delay
         self._logger = logger or logging.getLogger("proto4webrtc")
 
@@ -327,7 +349,11 @@ class Proto4WebrtcClient:
         recv_transport = None
         rpc_event_handler = None
 
-        async with websockets.connect(self.signaling_url) as ws:
+        url = self.signaling_url
+        if self.token:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}token={urllib.parse.quote(self.token, safe='')}"
+        async with websockets.connect(url) as ws:
             self._ws = ws
             reader_task = asyncio.ensure_future(self._reader(ws))
             try:
@@ -451,7 +477,9 @@ class Proto4WebrtcClient:
         by_label = {svc._request_label: svc for svc in self._rpc_services}
         seen: set[str] = set()
 
-        async def consume(data_producer_id: str, svc: RpcServiceBase) -> None:
+        async def consume(
+            data_producer_id: str, svc: RpcServiceBase, role: str
+        ) -> None:
             if data_producer_id in seen:
                 return
             seen.add(data_producer_id)
@@ -478,16 +506,25 @@ class Proto4WebrtcClient:
             consumer.on(
                 "message",
                 lambda data: asyncio.ensure_future(
-                    svc._handle_request(data, self._logger)
+                    svc._handle_request(data, self._logger, role)
                 ),
             )
+
+        # The SFU stamps the caller's verified role into its requests
+        # channel's appData. Absent (auth disabled, or a pre-auth SFU) means
+        # full access.
+        def role_of(app_data) -> str:
+            role = (app_data or {}).get("role")
+            return role if isinstance(role, str) else "admin"
 
         def on_event(msg: dict) -> None:
             if msg.get("event") != "newDataProducer":
                 return
             svc = by_label.get(msg.get("label"))
             if svc is not None:
-                asyncio.ensure_future(consume(msg["dataProducerId"], svc))
+                asyncio.ensure_future(
+                    consume(msg["dataProducerId"], svc, role_of(msg.get("appData")))
+                )
 
         self._event_handlers.append(on_event)
 
@@ -495,6 +532,6 @@ class Proto4WebrtcClient:
         for dp in existing.get("dataProducers", []):
             svc = by_label.get(dp.get("label"))
             if svc is not None:
-                await consume(dp["dataProducerId"], svc)
+                await consume(dp["dataProducerId"], svc, role_of(dp.get("appData")))
 
         return recv_transport, on_event

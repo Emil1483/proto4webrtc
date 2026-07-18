@@ -6,6 +6,7 @@
 import type { types } from "mediasoup";
 import type { WebSocket } from "ws";
 
+import type { Role } from "./auth.js";
 import type { Proto4WebrtcSfu } from "./sfu.js";
 
 function describeProducer(p: types.Producer) {
@@ -30,10 +31,18 @@ export class PeerConnection {
   private consumers = new Map<string, types.Consumer>();
   private dataProducers = new Map<string, types.DataProducer>();
   private dataConsumers = new Map<string, types.DataConsumer>();
+  // Resolves once the signaling token is verified; undefined means the
+  // connection was rejected (the socket is closing) and messages are dropped.
+  private readonly role: Promise<Role | undefined>;
 
-  constructor(sfu: Proto4WebrtcSfu, ws: WebSocket) {
+  constructor(
+    sfu: Proto4WebrtcSfu,
+    ws: WebSocket,
+    role: Promise<Role | undefined> = Promise.resolve("robot"),
+  ) {
     this.sfu = sfu;
     this.ws = ws;
+    this.role = role;
     sfu.peers.add(this);
   }
 
@@ -61,6 +70,9 @@ export class PeerConnection {
     }
 
     try {
+      const role = await this.role;
+      if (role === undefined) return; // rejected token; socket is closing
+
       await this.sfu.connectToSfu();
 
       switch (msg.action) {
@@ -84,16 +96,16 @@ export class PeerConnection {
           return this.reply(msg.id, {});
 
         case "produce":
-          return this.reply(msg.id, await this.produce(msg));
+          return this.reply(msg.id, await this.produce(msg, role));
 
         case "produceData":
-          return this.reply(msg.id, await this.produceData(msg));
+          return this.reply(msg.id, await this.produceData(msg, role));
 
         case "consume":
-          return this.reply(msg.id, await this.consume(msg));
+          return this.reply(msg.id, await this.consume(msg, role));
 
         case "consumeData":
-          return this.reply(msg.id, await this.consumeData(msg));
+          return this.reply(msg.id, await this.consumeData(msg, role));
 
         case "resumeConsumer":
           await this.consumers.get(msg.consumerId as string)?.resume();
@@ -130,7 +142,9 @@ export class PeerConnection {
     };
   }
 
-  private async produce(msg: Envelope) {
+  private async produce(msg: Envelope, role: Role) {
+    // Media streams come from the robot only; browsers never produce media.
+    if (role !== "robot") throw new Error("permission denied: produce requires the robot role");
     const transport = this.getTransport(msg.transportId as string);
     const producer = await transport.produce({
       kind: msg.kind as types.MediaKind,
@@ -144,13 +158,25 @@ export class PeerConnection {
     return { id: producer.id };
   }
 
-  private async produceData(msg: Envelope) {
+  private async produceData(msg: Envelope, role: Role) {
+    const label = msg.label as string | undefined;
+    let appData = (msg.appData as types.AppData) ?? {};
+    if (role !== "robot") {
+      // Browsers may only open rpc request channels. Their appData gets the
+      // verified role stamped in (and any client-supplied role/protected
+      // stripped) — the robot reads it off the newDataProducer event to
+      // enforce protected rpc methods per caller.
+      if (!label?.endsWith("/requests"))
+        throw new Error("permission denied: producing streams requires the robot role");
+      const { role: _role, protected: _protected, ...rest } = appData;
+      appData = { ...rest, role };
+    }
     const transport = this.getTransport(msg.transportId as string);
     const dataProducer = await transport.produceData({
       sctpStreamParameters: msg.sctpStreamParameters as types.SctpStreamParameters,
-      label: msg.label as string | undefined,
+      label,
       protocol: msg.protocol as string | undefined,
-      appData: (msg.appData as types.AppData) ?? {},
+      appData,
     });
     this.dataProducers.set(dataProducer.id, dataProducer);
     this.sfu.dataProducers.set(dataProducer.id, dataProducer);
@@ -163,8 +189,10 @@ export class PeerConnection {
     return { id: dataProducer.id };
   }
 
-  private async consume(msg: Envelope) {
+  private async consume(msg: Envelope, role: Role) {
     const producerId = msg.producerId as string;
+    if (role === "guest" && this.sfu.producers.get(producerId)?.appData?.protected)
+      throw new Error("permission denied: protected stream");
     const rtpCapabilities = msg.rtpCapabilities as types.RtpCapabilities;
     if (!this.sfu.router.canConsume({ producerId, rtpCapabilities })) {
       throw new Error(`cannot consume ${producerId}`);
@@ -190,7 +218,12 @@ export class PeerConnection {
     };
   }
 
-  private async consumeData(msg: Envelope) {
+  private async consumeData(msg: Envelope, role: Role) {
+    if (
+      role === "guest" &&
+      this.sfu.dataProducers.get(msg.dataProducerId as string)?.appData?.protected
+    )
+      throw new Error("permission denied: protected stream");
     const transport = this.getTransport(msg.transportId as string);
     const dataConsumer = await transport.consumeData({
       dataProducerId: msg.dataProducerId as string,

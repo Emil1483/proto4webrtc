@@ -44,6 +44,7 @@ def test_generated_producers_include_rpc_service_base(tmp_path):
 
     source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
     assert "class RovControlBase(RpcServiceBase):" in source
-    assert '"SetLight": ("set_light", SetLightRequest)' in source
+    assert '"SetLight": ("set_light", SetLightRequest, True)' in source
+    assert '"Ping": ("ping", PingRequest, False)' in source
     assert "async def set_light(self, request: SetLightRequest)" in source
     assert "rov_control: RovControlBase" in source

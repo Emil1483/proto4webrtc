@@ -10,7 +10,9 @@ export function UPGRADE(
   request: import("next/server").NextRequest,
 ) {
   console.log("[sfu] peer connected");
-  sfu.handleWSClient(client);
+  // request.url carries the peer's ?token=; the SFU verifies it and derives
+  // the peer's role (no token -> guest when auth is enabled).
+  sfu.handleWSClient(client, request.url);
   client.on("close", () => console.log("[sfu] peer disconnected"));
 }
 

@@ -54,6 +54,8 @@ function generate(request, { react = false } = {}) {
   const dataExt = registry.getExtension("proto4webrtc.data_stream");
   const mediaExt = registry.getExtension("proto4webrtc.media_stream");
   const rpcExt = registry.getExtension("proto4webrtc.rpc_service");
+  // Absent when the compiled set carries a pre-auth options.proto.
+  const protectedExt = registry.getExtension("proto4webrtc.protected");
   const mediaKind = registry.getEnum("proto4webrtc.MediaKind");
   if (!dataExt || !mediaExt || !mediaKind) {
     throw new GenError(
@@ -77,6 +79,7 @@ function generate(request, { react = false } = {}) {
           typeName: message.typeName,
           protoFile: file.proto.name,
           label: o.label,
+          protected: !!o.protected,
           // A scalar `stamp` field enables automatic stale-message dropping
           // in the generated subscribe() (data channels deliver unordered).
           hasStamp: message.fields.some(
@@ -96,6 +99,7 @@ function generate(request, { react = false } = {}) {
           typeName: message.typeName,
           protoFile: file.proto.name,
           label: o.label,
+          protected: !!o.protected,
           kind: kind.toLowerCase(),
         });
       }
@@ -115,6 +119,7 @@ function generate(request, { react = false } = {}) {
         return {
           wireName: m.name,
           localName: m.localName, // camelCase, e.g. "setLight"
+          protected: !!(protectedExt && hasOption(m, protectedExt) && getOption(m, protectedExt)),
           input: { message: m.input.name, protoFile: m.input.file.proto.name },
           output: { message: m.output.name, protoFile: m.output.file.proto.name },
         };
@@ -249,9 +254,11 @@ function render(dataStreams, mediaStreams, rpcServices) {
    * pass { dropOutOfOrder: false } to deliver every message.`
       : "";
     return `\
-/** Data stream "${s.label}" (${s.typeName}). */
+/** Data stream "${s.label}" (${s.typeName})${s.protected ? "; admin-only" : ""}. */
 export const ${exportName(s.message)} = {
   label: "${s.label}",
+  /** Admin-only: the SFU denies guests this stream when auth is enabled. */
+  protected: ${s.protected},
   decode(data: ArrayBuffer | Uint8Array): ${s.message} {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     return fromBinary(${s.message}Schema, bytes);
@@ -283,9 +290,11 @@ ${subscribeBody}
 
   const mediaBlocks = mediaStreams.map(
     (s) => `\
-/** Media stream "${s.label}" (${s.kind}); track arrives over RTP. */
+/** Media stream "${s.label}" (${s.kind}${s.protected ? ", admin-only" : ""}); track arrives over RTP. */
 export const ${exportName(s.message)} = {
   label: "${s.label}",
+  /** Admin-only: the SFU denies guests this stream when auth is enabled. */
+  protected: ${s.protected},
   kind: "${s.kind}",
   /**
    * Typed wrapper over Proto4WebrtcClient.onMedia() (npm package
@@ -313,7 +322,7 @@ export interface RpcMethods {
 ${rpcMethods
   .map(
     ({ service, method }) => `\
-  /** ${service.typeName}.${method.wireName} (channel base "${service.label}"). */
+  /** ${service.typeName}.${method.wireName} (channel base "${service.label}")${method.protected ? "; admin-only — the robot rejects guest callers" : ""}. */
   ${method.localName}(
     request: MessageInitShape<typeof ${method.input.message}Schema>,
     options?: { timeoutMs?: number },

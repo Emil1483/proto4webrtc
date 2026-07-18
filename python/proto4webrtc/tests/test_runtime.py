@@ -271,6 +271,46 @@ async def test_rpc_service_handler_exception_is_an_error_response():
     assert res.error == "nope"
 
 
+class ProtectedService(EchoService):
+    # 3-tuple form: protected method (see options.proto's proto4webrtc.protected)
+    _METHODS = {"Echo": ("echo", DataStreamOptions, True)}
+
+
+@pytest.mark.asyncio
+async def test_protected_method_rejects_guest_callers():
+    svc = ProtectedService()
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(), logging.getLogger("test"), role="guest")
+
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert "permission denied" in res.error
+    assert res.payload == b""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["admin", "robot"])
+async def test_protected_method_allows_admin_and_robot(role):
+    svc = ProtectedService()
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(), logging.getLogger("test"), role=role)
+
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert res.error == ""
+
+
+@pytest.mark.asyncio
+async def test_unprotected_method_allows_guests_and_legacy_2_tuple_entries():
+    svc = EchoService()  # 2-tuple _METHODS: pre-auth generated code
+    svc._response_dp = FakeDataChannel()
+
+    await svc._handle_request(_request(), logging.getLogger("test"), role="guest")
+
+    res = RpcResponse.FromString(svc._response_dp.sent[0])
+    assert res.error == ""
+
+
 @pytest.mark.asyncio
 async def test_rpc_service_without_channel_swallows_response():
     svc = EchoService()  # _response_dp is None (not connected yet)

@@ -16,6 +16,7 @@ from proto4webrtc_codegen.naming import to_snake_case
 DATA_STREAM_EXT = "proto4webrtc.data_stream"
 MEDIA_STREAM_EXT = "proto4webrtc.media_stream"
 RPC_SERVICE_EXT = "proto4webrtc.rpc_service"
+PROTECTED_EXT = "proto4webrtc.protected"
 
 
 @dataclass
@@ -35,6 +36,7 @@ class DataStreamSpec(StreamSpec):
     delivery: str  # proto4webrtc.Delivery value name, e.g. "RELIABLE_ORDERED"
     backpressure: str  # proto4webrtc.Backpressure value name
     max_buffered_factor: int
+    protected: bool  # admin-only: SFU denies guests consumeData
 
 
 @dataclass
@@ -42,11 +44,13 @@ class MediaStreamSpec(StreamSpec):
     label: str
     kind: str  # "video" | "audio"
     video_codec: str  # proto4webrtc.VideoCodec value name
+    protected: bool  # admin-only: SFU denies guests consume
 
 
 @dataclass
 class RpcMethodSpec:
     name: str  # method name as declared, e.g. "SetSpeed" — the wire id
+    protected: bool  # admin-only: robot rejects guest callers
     input_full_name: str  # e.g. "example.SetSpeedRequest" (no leading dot)
     input_proto_file: str
     output_full_name: str
@@ -100,12 +104,19 @@ def extract_streams(
             "proto4webrtc/options.proto missing from descriptor set "
             "(compile with --include_imports)"
         ) from exc
+    try:
+        protected_ext = pool.FindExtensionByName(PROTECTED_EXT)
+    except KeyError:
+        protected_ext = None  # pre-auth options.proto in the compiled set
 
     options_cls = message_factory.GetMessageClass(
         pool.FindMessageTypeByName("google.protobuf.MessageOptions")
     )
     service_options_cls = message_factory.GetMessageClass(
         pool.FindMessageTypeByName("google.protobuf.ServiceOptions")
+    )
+    method_options_cls = message_factory.GetMessageClass(
+        pool.FindMessageTypeByName("google.protobuf.MethodOptions")
     )
 
     data_streams: list[DataStreamSpec] = []
@@ -139,6 +150,7 @@ def extract_streams(
                             pool, "proto4webrtc.Backpressure", o.backpressure
                         ),
                         max_buffered_factor=o.max_buffered_factor or 2,
+                        protected=o.protected,
                     )
                 )
 
@@ -168,6 +180,7 @@ def extract_streams(
                         video_codec=_enum_name(
                             pool, "proto4webrtc.VideoCodec", o.video_codec
                         ),
+                        protected=o.protected,
                     )
                 )
 
@@ -193,9 +206,15 @@ def extract_streams(
                     )
                 input_full = m.input_type.lstrip(".")
                 output_full = m.output_type.lstrip(".")
+                method_protected = False
+                if protected_ext is not None:
+                    mopts = method_options_cls()
+                    mopts.ParseFromString(m.options.SerializeToString())
+                    method_protected = mopts.Extensions[protected_ext]
                 methods.append(
                     RpcMethodSpec(
                         name=m.name,
+                        protected=method_protected,
                         input_full_name=input_full,
                         input_proto_file=pool.FindMessageTypeByName(
                             input_full

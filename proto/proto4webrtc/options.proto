@@ -51,6 +51,9 @@ message DataStreamOptions {
   // For DROP_IF_BUFFERED: drop when bufferedAmount > factor * message size.
   // 0 means the generator default (2).
   uint32 max_buffered_factor = 4;
+  // Admin-only: guests are denied consumeData for this stream at the SFU.
+  // Enforced only when the SFU has auth configured.
+  bool protected = 5;
 }
 
 enum MediaKind {
@@ -71,6 +74,9 @@ message MediaStreamOptions {
   string label = 1;
   MediaKind kind = 2;
   VideoCodec video_codec = 3;
+  // Admin-only: guests are denied consume for this track at the SFU.
+  // Enforced only when the SFU has auth configured.
+  bool protected = 4;
 }
 
 // A service annotated with (proto4webrtc.rpc_service) becomes a typed RPC
@@ -98,4 +104,13 @@ extend google.protobuf.MessageOptions {
 
 extend google.protobuf.ServiceOptions {
   RpcServiceOptions rpc_service = 50000;
+}
+
+extend google.protobuf.MethodOptions {
+  // Admin-only rpc method: the robot rejects calls from guest callers.
+  // The caller's role is stamped by the SFU into the appData of the
+  // browser's "<label>/requests" data producer (from the verified signaling
+  // token), so the robot never sees or verifies tokens itself. Enforced only
+  // when the SFU has auth configured.
+  bool protected = 50000;
 }

@@ -21,6 +21,7 @@ the main thread. send()/push() are safe to call from the ROS callback thread
 directly — no manual thread-marshaling needed.
 """
 
+import os
 import threading
 
 import numpy as np
@@ -71,8 +72,12 @@ class WebRtcStreamerNode(Node):
         signaling_url = (
             self.get_parameter("signaling_url").get_parameter_value().string_value
         )
+        # Robot auth token (JWT, role "robot"); empty disables auth.
+        self.declare_parameter("token", os.environ.get("PROTO4WEBRTC_TOKEN", ""))
+        token = self.get_parameter("token").get_parameter_value().string_value
         self.client = Proto4WebrtcProducer(
             signaling_url=signaling_url,
+            token=token or None,
             rov_control=RovControl(self),
             logger=self.get_logger(),
         )

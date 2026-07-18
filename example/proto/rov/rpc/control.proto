@@ -28,6 +28,9 @@ message PingResponse {
 service RovControl {
   option (proto4webrtc.rpc_service) = {label: "rov_control"};
 
-  rpc SetLight(SetLightRequest) returns (SetLightResponse);
+  // Admin-only: the robot rejects guest callers (see proto4webrtc.protected).
+  rpc SetLight(SetLightRequest) returns (SetLightResponse) {
+    option (proto4webrtc.protected) = true;
+  }
   rpc Ping(PingRequest) returns (PingResponse);
 }

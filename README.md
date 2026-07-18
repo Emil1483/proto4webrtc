@@ -353,6 +353,67 @@ process serving them: schedule the restart (e.g. `asyncio.get_event_loop()
 .call_later(...)` or a detached docker call) and return first, or the
 response never leaves the dying process and the browser sees a timeout.
 
+## Authentication
+
+Optional; disabled unless the SFU is given a way to verify tokens, in which
+case everything behaves exactly as before (every peer has full access).
+
+Peers authenticate by appending a token to the signaling WebSocket URL
+(`?token=`). The SFU verifies it and derives a role:
+
+- **guest** — no token. May subscribe to streams not marked `protected` and
+  call rpc methods not marked `protected`.
+- **admin** — may subscribe to every stream and call every rpc method.
+- **robot** — everything admins can, plus producing streams. Give the robot a
+  long-lived token (or mint one per boot via client credentials).
+
+Enable it on the SFU with a shared HS256 secret — any JWT signed with it and
+carrying a `role` claim (`"guest" | "admin" | "robot"`; `exp` honored) is
+accepted:
+
+```bash
+PROTO4WEBRTC_AUTH_SECRET=...   # env, or:
+```
+
+```ts
+new Proto4WebrtcSfu({ auth: { secret: "..." } });
+// or plug in your IdP / session store instead of the built-in verifier:
+new Proto4WebrtcSfu({
+  auth: { verifyToken: async (token) => ({ role: await lookup(token) }) },
+});
+```
+
+Pass the upgrade request's URL so the SFU can see the token:
+
+```ts
+sfu.handleWSClient(client, request.url);
+```
+
+Clients pass the token when connecting — browser:
+
+```ts
+const client = await connectToSfu({ token });      // or useSfu({...}, { token })
+```
+
+and robot (`token` also exposed as a ROS parameter in the example nodes):
+
+```python
+client = Proto4WebrtcProducer(signaling_url=..., token=os.environ["PROTO4WEBRTC_TOKEN"])
+```
+
+Issuing tokens (login pages, OAuth flows, session exchange) is the
+application's job — the library only verifies whatever token arrives.
+
+Enforcement is split by trust root. Stream protection is enforced at the SFU:
+only robot-role peers may produce streams, the generated producers stamp
+`protected` into the producer's `appData`, and guests are denied
+`consume`/`consumeData` on it. Rpc method protection is enforced on the
+robot: the SFU stamps each browser's verified role into the appData of its
+`<label>/requests` channel (client-supplied `role`/`protected` appData is
+stripped), and the generated service base rejects guests calling `protected`
+methods with a "permission denied" rpc error. The robot never sees or
+verifies tokens.
+
 ## Options reference
 
 | Option                | Applies to | Meaning                                                                                                         |
@@ -364,6 +425,8 @@ response never leaves the dying process and the browser sees a timeout.
 | `kind`                | media      | `VIDEO` or `AUDIO`                                                                                              |
 | `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                               |
 | `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
+| `protected`           | data/media | Admin-only stream: the SFU denies guests `consume`/`consumeData` (auth enabled only)                            |
+| `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (auth enabled only)                                      |
 
 The plugins never read `options.proto` at generation time — protoc compiles
 annotations into the descriptors it hands them. The file only matters when
