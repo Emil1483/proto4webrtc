@@ -30,6 +30,12 @@ class VideoCodec(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     VP8: _ClassVar[VideoCodec]
     VP9: _ClassVar[VideoCodec]
     H264: _ClassVar[VideoCodec]
+
+class Role(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ROLE_ROBOT: _ClassVar[Role]
+    ROLE_GUEST: _ClassVar[Role]
+    ROLE_ADMIN: _ClassVar[Role]
 DELIVERY_UNSPECIFIED: Delivery
 RELIABLE_ORDERED: Delivery
 UNRELIABLE: Delivery
@@ -43,34 +49,43 @@ VIDEO_CODEC_UNSPECIFIED: VideoCodec
 VP8: VideoCodec
 VP9: VideoCodec
 H264: VideoCodec
+ROLE_ROBOT: Role
+ROLE_GUEST: Role
+ROLE_ADMIN: Role
 DATA_STREAM_FIELD_NUMBER: _ClassVar[int]
 data_stream: _descriptor.FieldDescriptor
 MEDIA_STREAM_FIELD_NUMBER: _ClassVar[int]
 media_stream: _descriptor.FieldDescriptor
 RPC_SERVICE_FIELD_NUMBER: _ClassVar[int]
 rpc_service: _descriptor.FieldDescriptor
+PROTECTED_FIELD_NUMBER: _ClassVar[int]
+protected: _descriptor.FieldDescriptor
 
 class DataStreamOptions(_message.Message):
-    __slots__ = ("label", "delivery", "backpressure", "max_buffered_factor")
+    __slots__ = ("label", "delivery", "backpressure", "max_buffered_factor", "protected")
     LABEL_FIELD_NUMBER: _ClassVar[int]
     DELIVERY_FIELD_NUMBER: _ClassVar[int]
     BACKPRESSURE_FIELD_NUMBER: _ClassVar[int]
     MAX_BUFFERED_FACTOR_FIELD_NUMBER: _ClassVar[int]
+    PROTECTED_FIELD_NUMBER: _ClassVar[int]
     label: str
     delivery: Delivery
     backpressure: Backpressure
     max_buffered_factor: int
-    def __init__(self, label: _Optional[str] = ..., delivery: _Optional[_Union[Delivery, str]] = ..., backpressure: _Optional[_Union[Backpressure, str]] = ..., max_buffered_factor: _Optional[int] = ...) -> None: ...
+    protected: bool
+    def __init__(self, label: _Optional[str] = ..., delivery: _Optional[_Union[Delivery, str]] = ..., backpressure: _Optional[_Union[Backpressure, str]] = ..., max_buffered_factor: _Optional[int] = ..., protected: _Optional[bool] = ...) -> None: ...
 
 class MediaStreamOptions(_message.Message):
-    __slots__ = ("label", "kind", "video_codec")
+    __slots__ = ("label", "kind", "video_codec", "protected")
     LABEL_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     VIDEO_CODEC_FIELD_NUMBER: _ClassVar[int]
+    PROTECTED_FIELD_NUMBER: _ClassVar[int]
     label: str
     kind: MediaKind
     video_codec: VideoCodec
-    def __init__(self, label: _Optional[str] = ..., kind: _Optional[_Union[MediaKind, str]] = ..., video_codec: _Optional[_Union[VideoCodec, str]] = ...) -> None: ...
+    protected: bool
+    def __init__(self, label: _Optional[str] = ..., kind: _Optional[_Union[MediaKind, str]] = ..., video_codec: _Optional[_Union[VideoCodec, str]] = ..., protected: _Optional[bool] = ...) -> None: ...
 
 class RpcServiceOptions(_message.Message):
     __slots__ = ("label",)

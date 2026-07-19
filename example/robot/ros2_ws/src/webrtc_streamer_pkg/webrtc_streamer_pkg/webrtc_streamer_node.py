@@ -72,8 +72,9 @@ class WebRtcStreamerNode(Node):
         signaling_url = (
             self.get_parameter("signaling_url").get_parameter_value().string_value
         )
-        # Robot auth token (JWT, role "robot"); empty disables auth.
-        self.declare_parameter("token", os.environ.get("PROTO4WEBRTC_TOKEN", ""))
+        # Robot auth token, sent as "Authorization: Bearer <token>"; empty
+        # disables auth. Must match the server's ROBOT_TOKEN.
+        self.declare_parameter("token", os.environ.get("ROBOT_TOKEN", ""))
         token = self.get_parameter("token").get_parameter_value().string_value
         self.client = Proto4WebrtcProducer(
             signaling_url=signaling_url,

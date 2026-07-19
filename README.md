@@ -369,60 +369,50 @@ response never leaves the dying process and the browser sees a timeout.
 
 ## Authentication
 
-Optional; disabled unless the SFU is given a way to verify tokens, in which
-case everything behaves exactly as before (every peer has full access).
+**The SFU does not authenticate.** It enforces a `Role`, which your
+application resolves for each peer however it likes (JWT, session cookie,
+mTLS, an IdP lookup) and hands to `handleWSClient`. There are three roles
+(`proto4webrtc.Role`, exported from the runtime):
 
-Peers authenticate by appending a token to the signaling WebSocket URL
-(`?token=`). The SFU verifies it and derives a role:
-
-- **guest** — no token. May subscribe to streams not marked `protected` and
-  call rpc methods not marked `protected`.
+- **guest** — least privileged. May subscribe to streams not marked
+  `protected` and call rpc methods not marked `protected`.
 - **admin** — may subscribe to every stream and call every rpc method.
-- **robot** — everything admins can, plus producing streams. Give the robot a
-  long-lived token (or mint one per boot via client credentials).
+- **robot** — everything admins can, plus producing streams. This is the
+  **default** (`Role.ROBOT === 0`): pass no role and every peer has full
+  access, so no-auth works out of the box. A deployment that wants access
+  control **must** resolve and pass an explicit role.
 
-Enable it on the SFU with a shared HS256 secret — any JWT signed with it and
-carrying a `role` claim (`"guest" | "admin" | "robot"`; `exp` honored) is
-accepted:
-
-```bash
-PROTO4WEBRTC_AUTH_SECRET=...   # env, or:
-```
+Resolve the role in your signaling upgrade handler and pass it in:
 
 ```ts
-new Proto4WebrtcSfu({ auth: { secret: "..." } });
-// or plug in your IdP / session store instead of the built-in verifier:
-new Proto4WebrtcSfu({
-  auth: { verifyToken: async (token) => ({ role: await lookup(token) }) },
-});
+import { Role } from "proto4webrtc";
+
+const role = await resolveRole(request); // your code: verify, map to a Role
+if (role === undefined) return client.close(4401, "invalid token"); // reject
+sfu.handleWSClient(client, role);
 ```
 
-Pass the upgrade request's URL so the SFU can see the token:
+Because the browser `WebSocket` API can't set request headers, the token
+travels differently per peer — both on the handshake, never in the URL:
 
-```ts
-sfu.handleWSClient(client, request.url);
-```
+- **robot** — an `Authorization: Bearer <token>` header. The example nodes
+  expose `token` as a ROS parameter; the Python runtime sends it as this
+  header:
+  ```python
+  client = Proto4WebrtcProducer(signaling_url=..., token=os.environ["ROBOT_TOKEN"])
+  ```
+- **browser** — a cookie (ideally `HttpOnly`), sent automatically on the WS
+  handshake. `connectToSfu()` / `useSfu()` take no token option.
 
-Clients pass the token when connecting — browser:
-
-```ts
-const client = await connectToSfu({ token }); // or useSfu({...}, { token })
-```
-
-and robot (`token` also exposed as a ROS parameter in the example nodes):
-
-```python
-client = Proto4WebrtcProducer(signaling_url=..., token=os.environ["PROTO4WEBRTC_TOKEN"])
-```
-
-Issuing tokens (login pages, OAuth flows, session exchange) is the
-application's job — the library only verifies whatever token arrives.
+Issuing tokens and cookies (login pages, OAuth flows, session exchange) is the
+application's job. See [`example/`](example/README.md) for a worked HS256-JWT
+resolver (`server/src/lib/proto4webrtc/auth.ts`).
 
 Enforcement is split by trust root. Stream protection is enforced at the SFU:
 only robot-role peers may produce streams, the generated producers stamp
 `protected` into the producer's `appData`, and guests are denied
 `consume`/`consumeData` on it. Rpc method protection is enforced on the
-robot: the SFU stamps each browser's verified role into the appData of its
+robot: the SFU stamps each browser's resolved role into the appData of its
 `<label>/requests` channel (client-supplied `role`/`protected` appData is
 stripped), and the generated service base rejects guests calling `protected`
 methods with a "permission denied" rpc error. The robot never sees or
@@ -439,8 +429,8 @@ verifies tokens.
 | `kind`                | media      | `VIDEO` or `AUDIO`                                                                                              |
 | `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                               |
 | `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
-| `protected`           | data/media | Admin-only stream: the SFU denies guests `consume`/`consumeData` (auth enabled only)                            |
-| `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (auth enabled only)                                      |
+| `protected`           | data/media | Admin-only stream: the SFU denies guests `consume`/`consumeData` (enforced only when the host passes non-robot roles) |
+| `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (enforced only when the host passes non-robot roles)     |
 
 The plugins never read `options.proto` at generation time — protoc compiles
 annotations into the descriptors it hands them. The file only matters when

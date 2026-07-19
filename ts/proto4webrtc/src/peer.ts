@@ -6,7 +6,7 @@
 import type { types } from "mediasoup";
 import type { WebSocket } from "ws";
 
-import type { Role } from "./auth.js";
+import { Role } from "./roles.js";
 import type { Proto4WebrtcSfu } from "./sfu.js";
 
 function describeProducer(p: types.Producer) {
@@ -31,15 +31,11 @@ export class PeerConnection {
   private consumers = new Map<string, types.Consumer>();
   private dataProducers = new Map<string, types.DataProducer>();
   private dataConsumers = new Map<string, types.DataConsumer>();
-  // Resolves once the signaling token is verified; undefined means the
-  // connection was rejected (the socket is closing) and messages are dropped.
-  private readonly role: Promise<Role | undefined>;
+  // The peer's access level, resolved by the host application before this
+  // peer was created. Defaults to ROBOT (no-auth: everything allowed).
+  private readonly role: Role;
 
-  constructor(
-    sfu: Proto4WebrtcSfu,
-    ws: WebSocket,
-    role: Promise<Role | undefined> = Promise.resolve("robot"),
-  ) {
+  constructor(sfu: Proto4WebrtcSfu, ws: WebSocket, role: Role = Role.ROBOT) {
     this.sfu = sfu;
     this.ws = ws;
     this.role = role;
@@ -70,8 +66,7 @@ export class PeerConnection {
     }
 
     try {
-      const role = await this.role;
-      if (role === undefined) return; // rejected token; socket is closing
+      const role = this.role;
 
       await this.sfu.connectToSfu();
 
@@ -144,7 +139,7 @@ export class PeerConnection {
 
   private async produce(msg: Envelope, role: Role) {
     // Media streams come from the robot only; browsers never produce media.
-    if (role !== "robot") throw new Error("permission denied: produce requires the robot role");
+    if (role !== Role.ROBOT) throw new Error("permission denied: produce requires the robot role");
     const transport = this.getTransport(msg.transportId as string);
     const producer = await transport.produce({
       kind: msg.kind as types.MediaKind,
@@ -161,9 +156,9 @@ export class PeerConnection {
   private async produceData(msg: Envelope, role: Role) {
     const label = msg.label as string | undefined;
     let appData = (msg.appData as types.AppData) ?? {};
-    if (role !== "robot") {
+    if (role !== Role.ROBOT) {
       // Browsers may only open rpc request channels. Their appData gets the
-      // verified role stamped in (and any client-supplied role/protected
+      // resolved role stamped in (and any client-supplied role/protected
       // stripped) — the robot reads it off the newDataProducer event to
       // enforce protected rpc methods per caller.
       if (!label?.endsWith("/requests"))
@@ -191,7 +186,7 @@ export class PeerConnection {
 
   private async consume(msg: Envelope, role: Role) {
     const producerId = msg.producerId as string;
-    if (role === "guest" && this.sfu.producers.get(producerId)?.appData?.protected)
+    if (role === Role.GUEST && this.sfu.producers.get(producerId)?.appData?.protected)
       throw new Error("permission denied: protected stream");
     const rtpCapabilities = msg.rtpCapabilities as types.RtpCapabilities;
     if (!this.sfu.router.canConsume({ producerId, rtpCapabilities })) {
@@ -220,7 +215,7 @@ export class PeerConnection {
 
   private async consumeData(msg: Envelope, role: Role) {
     if (
-      role === "guest" &&
+      role === Role.GUEST &&
       this.sfu.dataProducers.get(msg.dataProducerId as string)?.appData?.protected
     )
       throw new Error("permission denied: protected stream");

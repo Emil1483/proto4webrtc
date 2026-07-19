@@ -52,7 +52,7 @@ message DataStreamOptions {
   // 0 means the generator default (2).
   uint32 max_buffered_factor = 4;
   // Admin-only: guests are denied consumeData for this stream at the SFU.
-  // Enforced only when the SFU has auth configured.
+  // Enforced only when the host passes non-robot roles (see enum Role).
   bool protected = 5;
 }
 
@@ -75,7 +75,7 @@ message MediaStreamOptions {
   MediaKind kind = 2;
   VideoCodec video_codec = 3;
   // Admin-only: guests are denied consume for this track at the SFU.
-  // Enforced only when the SFU has auth configured.
+  // Enforced only when the host passes non-robot roles (see enum Role).
   bool protected = 4;
 }
 
@@ -97,6 +97,28 @@ message RpcServiceOptions {
   string label = 1;
 }
 
+// A peer's access level on the signaling connection. The SFU runtime does NOT
+// authenticate: the host application verifies the peer however it likes
+// (JWT, session cookie, mTLS, ...), maps the result to one of these, and
+// hands it to the SFU (TS: handleWSClient(client, role)). The SFU stamps the
+// value into the requests-channel appData so the robot can enforce
+// `protected` methods per caller.
+//
+// ROLE_ROBOT is the zero value ON PURPOSE: when the host passes nothing, every
+// peer is a robot and everything is allowed — i.e. no-auth works out of the
+// box. A deployment that wants access control MUST pass an explicit role;
+// forgetting to do so silently grants full access.
+enum Role {
+  // Producer. Everything admins can, plus producing streams. Default / no-auth.
+  ROLE_ROBOT = 0;
+  // Consumer, least privileged. May consume non-protected streams only and
+  // produce "<label>/requests" channels for non-protected rpc methods.
+  ROLE_GUEST = 1;
+  // Consumer. May consume every stream (protected included) and call
+  // protected rpc methods.
+  ROLE_ADMIN = 2;
+}
+
 extend google.protobuf.MessageOptions {
   DataStreamOptions data_stream = 50000;
   MediaStreamOptions media_stream = 50001;
@@ -108,9 +130,9 @@ extend google.protobuf.ServiceOptions {
 
 extend google.protobuf.MethodOptions {
   // Admin-only rpc method: the robot rejects calls from guest callers.
-  // The caller's role is stamped by the SFU into the appData of the
-  // browser's "<label>/requests" data producer (from the verified signaling
-  // token), so the robot never sees or verifies tokens itself. Enforced only
-  // when the SFU has auth configured.
+  // The caller's Role (see enum Role) is stamped by the SFU into the appData
+  // of the browser's "<label>/requests" data producer, from the role the host
+  // application resolved for the peer — the robot never sees or verifies
+  // tokens itself. Enforced only when the host passes non-robot roles.
   bool protected = 50000;
 }

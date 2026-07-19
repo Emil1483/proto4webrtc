@@ -15,7 +15,6 @@ import fractions
 import json
 import logging
 import time
-import urllib.parse
 
 import websockets
 from aiortc import MediaStreamTrack
@@ -25,6 +24,7 @@ from pymediasoup.models.transport import DtlsParameters, IceCandidate, IceParame
 from pymediasoup.rtp_parameters import RtpCapabilities
 from pymediasoup.sctp_parameters import SctpParameters, SctpStreamParameters
 
+from proto4webrtc.options_pb2 import ROLE_ADMIN, ROLE_ROBOT
 from proto4webrtc.rpc_pb2 import RpcRequest, RpcResponse
 
 try:
@@ -196,6 +196,9 @@ class RpcServiceBase:
     # wire method name -> (python method attr, request message class[, protected])
     # The 2-tuple form (pre-auth generated code) means not protected.
     _METHODS: dict
+    # Roles allowed to call a protected method. ROLE_ROBOT is the default/no-auth
+    # role and always allowed (the robot's own in-process calls).
+    _PRIVILEGED_ROLES = (ROLE_ADMIN, ROLE_ROBOT)
 
     def __init__(self):
         self._response_dp = None
@@ -212,7 +215,7 @@ class RpcServiceBase:
     def _detach(self) -> None:
         self._response_dp = None
 
-    async def _handle_request(self, data: bytes, logger, role: str = "admin") -> None:
+    async def _handle_request(self, data: bytes, logger, role: int = ROLE_ROBOT) -> None:
         try:
             req = RpcRequest.FromString(bytes(data))
         except Exception:
@@ -225,9 +228,9 @@ class RpcServiceBase:
                 raise ValueError(f"unknown method: {req.method}")
             attr, request_cls = entry[0], entry[1]
             protected = entry[2] if len(entry) > 2 else False
-            # `role` is what the SFU stamped into the caller's requests
-            # channel from its verified token — not client-supplied.
-            if protected and role not in ("admin", "robot"):
+            # `role` is the Role the SFU stamped into the caller's requests
+            # channel (from the role the host resolved) — not client-supplied.
+            if protected and role not in self._PRIVILEGED_ROLES:
                 raise PermissionError(f"permission denied: {req.method} is protected")
             result = await getattr(self, attr)(request_cls.FromString(req.payload))
             resp.payload = result.SerializeToString()
@@ -257,9 +260,10 @@ class Proto4WebrtcClient:
         token: str | None = None,
     ):
         self.signaling_url = signaling_url
-        # Signaling auth token (JWT with role "robot"), sent as ?token= on
-        # the websocket URL. Required to produce streams when the SFU has
-        # auth enabled; None connects unauthenticated (auth-disabled SFUs).
+        # Signaling auth token (JWT with role "robot"), sent as an
+        # "Authorization: Bearer <token>" header on the websocket handshake.
+        # Required to produce streams when the SFU host enforces auth; None
+        # connects with no header (no-auth SFUs treat every peer as robot).
         self.token = token
         self.reconnect_delay = reconnect_delay
         self._logger = logger or logging.getLogger("proto4webrtc")
@@ -349,11 +353,16 @@ class Proto4WebrtcClient:
         recv_transport = None
         rpc_event_handler = None
 
-        url = self.signaling_url
-        if self.token:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}token={urllib.parse.quote(self.token, safe='')}"
-        async with websockets.connect(url) as ws:
+        # Send the token as an Authorization header (not a ?token= query
+        # param): the host application reads it off the upgrade request,
+        # verifies it, and resolves the peer's role. None connects with no
+        # header (no-auth SFUs, which treat every peer as robot).
+        headers = (
+            {"Authorization": f"Bearer {self.token}"} if self.token else None
+        )
+        async with websockets.connect(
+            self.signaling_url, additional_headers=headers
+        ) as ws:
             self._ws = ws
             reader_task = asyncio.ensure_future(self._reader(ws))
             try:
@@ -478,7 +487,7 @@ class Proto4WebrtcClient:
         seen: set[str] = set()
 
         async def consume(
-            data_producer_id: str, svc: RpcServiceBase, role: str
+            data_producer_id: str, svc: RpcServiceBase, role: int
         ) -> None:
             if data_producer_id in seen:
                 return
@@ -510,12 +519,12 @@ class Proto4WebrtcClient:
                 ),
             )
 
-        # The SFU stamps the caller's verified role into its requests
-        # channel's appData. Absent (auth disabled, or a pre-auth SFU) means
-        # full access.
-        def role_of(app_data) -> str:
+        # The SFU stamps the caller's Role (an int; see proto4webrtc.Role) into
+        # its requests channel's appData. Absent (no-auth SFU, or a peer the
+        # host left as robot) means ROLE_ROBOT — full access.
+        def role_of(app_data) -> int:
             role = (app_data or {}).get("role")
-            return role if isinstance(role, str) else "admin"
+            return role if isinstance(role, int) and not isinstance(role, bool) else ROLE_ROBOT
 
         def on_event(msg: dict) -> None:
             if msg.get("event") != "newDataProducer":

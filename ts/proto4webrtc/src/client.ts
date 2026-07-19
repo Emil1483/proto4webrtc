@@ -32,12 +32,12 @@ export interface Proto4WebrtcClientOptions {
   /** Signaling WebSocket URL. Default: ws(s)://<location.host>/api/sfu */
   url?: string;
   /**
-   * Signaling auth token (JWT with a `role: "guest" | "admin"` claim),
-   * appended to the URL as `?token=`. Omit to connect as guest — when the
-   * SFU has auth enabled, guests can't consume protected streams or call
-   * protected rpc methods. An invalid token closes the socket (code 4401).
+   * The browser WebSocket API can't set request headers, so there is no token
+   * option here: authenticate the signaling connection with a cookie instead.
+   * A same-origin cookie (ideally HttpOnly) is sent automatically on the WS
+   * handshake, where the host app reads it, resolves a Role, and passes it to
+   * the SFU. With no auth configured every peer is a robot (full access).
    */
-  token?: string;
   onConnectionState?: (state: ConnectionState) => void;
 }
 
@@ -103,9 +103,7 @@ export class Proto4WebrtcClient {
     options: Proto4WebrtcClientOptions = {},
   ): Promise<Proto4WebrtcClient> {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    let url = options.url ?? `${proto}://${window.location.host}/api/sfu`;
-    if (options.token)
-      url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(options.token)}`;
+    const url = options.url ?? `${proto}://${window.location.host}/api/sfu`;
     const client = new Proto4WebrtcClient(url, options.onConnectionState);
     await new Promise<void>((resolve, reject) => {
       client.ws.onopen = () => resolve();

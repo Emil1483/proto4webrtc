@@ -18,6 +18,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import AuthControl from "@/components/AuthControl";
 
 interface Entry {
   label: string; // stream label or rpc service channel base
@@ -103,7 +104,10 @@ export default function Home() {
       <Stack spacing={4}>
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <Typography variant="h4">Robot</Typography>
-          <Chip label={`WebRTC: ${connectionState}`} color={stateColor} size="small" />
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <Chip label={`WebRTC: ${connectionState}`} color={stateColor} size="small" />
+            <AuthControl />
+          </Box>
         </Box>
 
         {groups.map((group) => (

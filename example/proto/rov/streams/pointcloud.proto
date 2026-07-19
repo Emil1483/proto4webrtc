@@ -23,6 +23,7 @@ message PointCloud {
     delivery: RELIABLE_ORDERED    // clouds fragment into many SCTP chunks
     backpressure: DROP_IF_BUFFERED // newest cloud wins
     max_buffered_factor: 2
+    protected: true                // admin-only: guests are denied consumeData
   };
 
   // Capture time, seconds since epoch.

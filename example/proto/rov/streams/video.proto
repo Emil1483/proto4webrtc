@@ -16,5 +16,6 @@ message CameraStream {
     label: "camera"
     kind: VIDEO
     video_codec: VP8
+    protected: true  // admin-only: guests are denied consume of this track
   };
 }

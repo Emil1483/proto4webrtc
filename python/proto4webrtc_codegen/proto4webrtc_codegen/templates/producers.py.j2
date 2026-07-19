@@ -104,8 +104,8 @@ class Proto4WebrtcProducer(Proto4WebrtcClient):
     client.run_forever()  # blocking; call from a background thread or your run handler
     """
 
-    def __init__(self, signaling_url: str, {% for s in rpc %}{{ s.attr }}: {{ s.class_name }}, {% endfor %}reconnect_delay: float = 3.0, logger=None):
-        super().__init__(signaling_url, reconnect_delay=reconnect_delay, logger=logger)
+    def __init__(self, signaling_url: str, {% for s in rpc %}{{ s.attr }}: {{ s.class_name }}, {% endfor %}reconnect_delay: float = 3.0, logger=None, token: str | None = None):
+        super().__init__(signaling_url, reconnect_delay=reconnect_delay, logger=logger, token=token)
 {% for s in media %}
         self.{{ s.track_attr }} = FrameTrack(kind="{{ s.kind }}", clock_rate={{ s.clock_rate }})
 {% endfor %}

@@ -36,9 +36,12 @@ RUN useradd -m -s /bin/bash -u 1000 $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
 
-# Source ROS2 on every bash session (root and dev)
+# Source ROS2 (and the single example/.env, if present) on every bash session
+# (root and dev). The .env is guarded so a missing file leaves the app to show
+# its own clear "auth not configured" error instead of breaking the shell.
 RUN for rc in /root/.bashrc /home/$USERNAME/.bashrc; do \
     echo "source /opt/ros/humble/setup.bash" >> $rc; \
     echo "source /repo_root/example/robot/ros2_ws/install/setup.bash 2>/dev/null || true" >> $rc; \
     echo "export PYTHONPATH=\$PYTHONPATH:/repo_root/example/robot/ros2_ws/.venv/lib/python3.10/site-packages" >> $rc; \
+    echo "set -a; [ -f /repo_root/example/.env ] && . /repo_root/example/.env; set +a" >> $rc; \
     done
