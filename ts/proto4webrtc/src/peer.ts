@@ -74,6 +74,13 @@ export class PeerConnection {
         case "getRtpCapabilities":
           return this.reply(msg.id, this.sfu.router.rtpCapabilities);
 
+        case "whoami":
+          // The host-resolved Role for this connection, so a peer can tell it
+          // was accepted with a lower role than it expected (e.g. a robot
+          // whose token didn't match, landing as GUEST) instead of silently
+          // failing to produce.
+          return this.reply(msg.id, { role });
+
         case "getProducers":
           // Late joiner: list what's already being produced.
           return this.reply(msg.id, {

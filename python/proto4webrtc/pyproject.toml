@@ -1,6 +1,6 @@
 [project]
 name = "proto4webrtc"
-version = "1.4.1"
+version = "1.5.0"
 description = "Mediasoup producer runtime (pymediasoup) for proto4webrtc-annotated protofiles"
 readme = "README.md"
 license = { text = "MIT" }
@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 # The code generator lives in its own distribution so production builds can
 # ship the runtime alone; `pip install proto4webrtc[compiler]` pulls it in.
-compiler = ["proto4webrtc-codegen==1.4.1"]
+compiler = ["proto4webrtc-codegen==1.5.0"]
 test = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [project.urls]

@@ -33,4 +33,13 @@ message RpcResponse {
   bytes payload = 3;
   // Non-empty means the call failed; the client rejects with this message.
   string error = 4;
+  // Readiness beacon, not a real response: when non-empty this envelope
+  // carries no id/payload/error and simply announces that the robot has
+  // consumed the request channel whose SFU dataProducerId is echoed here.
+  // A browser must not send its first request on a "<label>/requests" channel
+  // until it sees its own channel's id here, otherwise the request can race
+  // ahead of the robot's consumer and be silently dropped by the SFU. The
+  // robot resends the beacon a few times to beat the browser's own
+  // response-channel consumer setup.
+  string ready_request_id = 5;
 }

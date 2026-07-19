@@ -1,6 +1,6 @@
 {
   "name": "protoc-gen-proto4webrtc-ts",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "protoc plugin: mediasoup consumer wrappers (TypeScript) from proto4webrtc-annotated protofiles",
   "license": "MIT",
   "author": "Emil Djupvik",

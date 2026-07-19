@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file proto4webrtc/rpc.proto.
  */
 export const file_proto4webrtc_rpc: GenFile = /*@__PURE__*/
-  fileDesc("ChZwcm90bzR3ZWJydGMvcnBjLnByb3RvEgxwcm90bzR3ZWJydGMiTAoKUnBjUmVxdWVzdBIRCgljbGllbnRfaWQYASABKAkSCgoCaWQYAiABKAQSDgoGbWV0aG9kGAMgASgJEg8KB3BheWxvYWQYBCABKAwiTAoLUnBjUmVzcG9uc2USEQoJY2xpZW50X2lkGAEgASgJEgoKAmlkGAIgASgEEg8KB3BheWxvYWQYAyABKAwSDQoFZXJyb3IYBCABKAliBnByb3RvMw");
+  fileDesc("ChZwcm90bzR3ZWJydGMvcnBjLnByb3RvEgxwcm90bzR3ZWJydGMiTAoKUnBjUmVxdWVzdBIRCgljbGllbnRfaWQYASABKAkSCgoCaWQYAiABKAQSDgoGbWV0aG9kGAMgASgJEg8KB3BheWxvYWQYBCABKAwiZgoLUnBjUmVzcG9uc2USEQoJY2xpZW50X2lkGAEgASgJEgoKAmlkGAIgASgEEg8KB3BheWxvYWQYAyABKAwSDQoFZXJyb3IYBCABKAkSGAoQcmVhZHlfcmVxdWVzdF9pZBgFIAEoCWIGcHJvdG8z");
 
 /**
  * @generated from message proto4webrtc.RpcRequest
@@ -92,6 +92,20 @@ export type RpcResponse = Message<"proto4webrtc.RpcResponse"> & {
    * @generated from field: string error = 4;
    */
   error: string;
+
+  /**
+   * Readiness beacon, not a real response: when non-empty this envelope
+   * carries no id/payload/error and simply announces that the robot has
+   * consumed the request channel whose SFU dataProducerId is echoed here.
+   * A browser must not send its first request on a "<label>/requests" channel
+   * until it sees its own channel's id here, otherwise the request can race
+   * ahead of the robot's consumer and be silently dropped by the SFU. The
+   * robot resends the beacon a few times to beat the browser's own
+   * response-channel consumer setup.
+   *
+   * @generated from field: string ready_request_id = 5;
+   */
+  readyRequestId: string;
 };
 
 /**

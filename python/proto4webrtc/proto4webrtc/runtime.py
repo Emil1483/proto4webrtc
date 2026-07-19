@@ -215,6 +215,14 @@ class RpcServiceBase:
     def _detach(self) -> None:
         self._response_dp = None
 
+    def _send_ready(self, request_channel_id: str) -> None:
+        """Announce on the shared response channel that this service has
+        consumed the request channel with the given SFU dataProducerId, so the
+        producing browser knows it is safe to send. Carries no id/payload."""
+        dp = self._response_dp
+        if dp is not None and dp.readyState == "open":
+            dp.send(RpcResponse(ready_request_id=request_channel_id).SerializeToString())
+
     async def _handle_request(self, data: bytes, logger, role: int = ROLE_ROBOT) -> None:
         try:
             req = RpcRequest.FromString(bytes(data))
@@ -345,6 +353,28 @@ class Proto4WebrtcClient:
                 for handler in list(self._event_handlers):
                     handler(msg)
 
+    async def _warn_if_not_robot(self) -> None:
+        """Log loudly if the signaling host resolved a role other than ROBOT.
+
+        A robot needs ROLE_ROBOT to produce streams and serve rpc; landing as
+        GUEST/ADMIN means the connection was accepted but every produce/rpc
+        will be denied — usually a token that doesn't match the server's
+        ROBOT_TOKEN (or a server that requires one when none was sent).
+        Best-effort: older SFUs without the `whoami` action are ignored."""
+        try:
+            who = await self.rpc("whoami")
+        except Exception:
+            return  # SFU predates whoami; nothing to check
+        role = who.get("role") if isinstance(who, dict) else None
+        if role is not None and role != ROLE_ROBOT:
+            self._logger.error(
+                f"signaling connection resolved role {role}, not ROBOT "
+                f"({ROLE_ROBOT}): the server accepted this peer but will deny "
+                "producing streams and serving rpc. Check that the robot's "
+                "token matches the server's ROBOT_TOKEN (or that a token is "
+                "supplied if the server requires one)."
+            )
+
     # --- asyncio / mediasoup -------------------------------------------------
 
     async def _connect_once(self) -> None:
@@ -367,6 +397,7 @@ class Proto4WebrtcClient:
             reader_task = asyncio.ensure_future(self._reader(ws))
             try:
                 router_caps = await self.rpc("getRtpCapabilities")
+                await self._warn_if_not_robot()
                 device = Device(
                     handlerFactory=AiortcHandler.createFactory(
                         tracks=self._tracks, loop=self._loop
@@ -510,13 +541,26 @@ class Proto4WebrtcClient:
                     protocol=p.get("protocol"),
                 )
             except Exception as exc:
+                seen.discard(data_producer_id)  # let a reconnect/retry re-consume
                 self._logger.warning(f"rpc consumeData failed: {exc}")
                 return
-            consumer.on(
-                "message",
-                lambda data: asyncio.ensure_future(
+            # A request arriving proves the channel is flowing; used to stop
+            # the readiness beacon early.
+            got_request = asyncio.Event()
+
+            def on_message(data):
+                got_request.set()
+                asyncio.ensure_future(
                     svc._handle_request(data, self._logger, role)
-                ),
+                )
+
+            consumer.on("message", on_message)
+            # Tell the producing browser its channel is consumed so its first
+            # send doesn't race ahead of this consumer and get dropped. Resent
+            # a few times to survive the browser's own response-channel
+            # consumer still coming up; stops as soon as a request lands.
+            asyncio.ensure_future(
+                self._beacon_ready(svc, data_producer_id, got_request)
             )
 
         # The SFU stamps the caller's Role (an int; see proto4webrtc.Role) into
@@ -544,3 +588,15 @@ class Proto4WebrtcClient:
                 await consume(dp["dataProducerId"], svc, role_of(dp.get("appData")))
 
         return recv_transport, on_event
+
+    async def _beacon_ready(self, svc, channel_id: str, got_request) -> None:
+        """Send readiness beacons for a just-consumed request channel until the
+        browser starts sending (or a small budget is exhausted). Cheap: a
+        handful of tiny envelopes on the shared response channel."""
+        for _ in range(5):
+            svc._send_ready(channel_id)
+            try:
+                await asyncio.wait_for(got_request.wait(), timeout=0.3)
+                return  # the browser is clearly sending now
+            except asyncio.TimeoutError:
+                continue

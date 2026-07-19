@@ -21,24 +21,24 @@ def generate_launch_description():
                 description="WebRTC signaling WebSocket URL on the server",
             ),
             # Demo pub/sub nodes.
-            Node(
-                package="publisher_pkg",
-                executable="greeter_node",
-                respawn=True,
-                respawn_delay=2.0,
-            ),
-            Node(
-                package="subscriber_pkg",
-                executable="listener_node",
-                respawn=True,
-                respawn_delay=2.0,
-            ),
-            Node(
-                package="cpp_subscriber_pkg",
-                executable="listener_node",
-                respawn=True,
-                respawn_delay=2.0,
-            ),
+            # Node(
+            #     package="publisher_pkg",
+            #     executable="greeter_node",
+            #     respawn=True,
+            #     respawn_delay=2.0,
+            # ),
+            # Node(
+            #     package="subscriber_pkg",
+            #     executable="listener_node",
+            #     respawn=True,
+            #     respawn_delay=2.0,
+            # ),
+            # Node(
+            #     package="cpp_subscriber_pkg",
+            #     executable="listener_node",
+            #     respawn=True,
+            #     respawn_delay=2.0,
+            # ),
             # Sensor nodes: thruster, camera, pointcloud.
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(

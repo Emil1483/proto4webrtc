@@ -268,6 +268,11 @@ export class Proto4WebrtcClient {
   private sendTransportPromise?: Promise<types.Transport>;
   private requestProducers = new Map<string, Promise<types.DataProducer>>();
   private rpcSubscribed = new Set<string>();
+  // Per request-channel readiness gate, keyed by the channel's SFU
+  // dataProducerId. Resolved when the robot's readiness beacon for that
+  // channel arrives on "<label>/responses"; the first send waits on it so the
+  // request can't race ahead of the robot's consumer and get dropped.
+  private channelReady = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 
   /**
    * One unary rpc call, raw payload in/out — the generated typed
@@ -283,6 +288,11 @@ export class Proto4WebrtcClient {
   ): Promise<Uint8Array> {
     this.subscribeRpcResponses(label);
     const producer = await this.getRequestProducer(label);
+    // Don't send until the robot signals it has consumed this channel — the
+    // "open" state above only means browser->SFU is up, not that the robot is
+    // listening yet. Falls through after a timeout so a missed beacon degrades
+    // to the old fire-immediately behaviour instead of hanging forever.
+    await this.waitChannelReady(producer.id);
     const id = this.nextRpcId++;
     const bytes = toBinary(
       RpcRequestSchema,
@@ -315,6 +325,12 @@ export class Proto4WebrtcClient {
     this.rpcSubscribed.add(label);
     this.subscribe(`${label}/responses`, (data) => {
       const res = fromBinary(RpcResponseSchema, data);
+      // Readiness beacon (broadcast, no client_id): open this channel's gate
+      // if it's ours. Matched by request-channel id, so other browsers ignore.
+      if (res.readyRequestId) {
+        this.channelReady.get(res.readyRequestId)?.resolve();
+        return;
+      }
       if (res.clientId !== this.clientId) return; // some other browser's call
       const pending = this.rpcPending.get(res.id);
       if (!pending) return;
@@ -342,12 +358,38 @@ export class Proto4WebrtcClient {
             );
           });
         }
+        // Arm the readiness gate before any send can happen, keyed by this
+        // channel's SFU id (which the robot's beacon echoes back).
+        this.registerChannelReady(dataProducer.id);
         return dataProducer;
       })();
       this.requestProducers.set(label, producer);
       producer.catch(() => this.requestProducers.delete(label));
     }
     return producer;
+  }
+
+  private registerChannelReady(id: string): void {
+    if (this.channelReady.has(id)) return;
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    this.channelReady.set(id, { promise, resolve });
+  }
+
+  /**
+   * Resolve once the robot's readiness beacon for this request channel arrives,
+   * or after a short timeout — the fallback keeps a dropped/late beacon from
+   * hanging the call, at the cost of racing the send like the old behaviour.
+   */
+  private waitChannelReady(id: string): Promise<void> {
+    const entry = this.channelReady.get(id);
+    if (!entry) return Promise.resolve();
+    return Promise.race([
+      entry.promise,
+      new Promise<void>((r) => setTimeout(r, 5_000)),
+    ]);
   }
 
   private getSendTransport(): Promise<types.Transport> {
@@ -426,6 +468,7 @@ export class Proto4WebrtcClient {
       pending.reject(new Error("client closed"));
     }
     this.rpcPending.clear();
+    for (const gate of this.channelReady.values()) gate.resolve();
     void this.sendTransportPromise?.then((t) => t.close()).catch(() => {});
     this.recvTransport?.close();
     this.ws.close();

@@ -17,13 +17,15 @@ class RpcRequest(_message.Message):
     def __init__(self, client_id: _Optional[str] = ..., id: _Optional[int] = ..., method: _Optional[str] = ..., payload: _Optional[bytes] = ...) -> None: ...
 
 class RpcResponse(_message.Message):
-    __slots__ = ("client_id", "id", "payload", "error")
+    __slots__ = ("client_id", "id", "payload", "error", "ready_request_id")
     CLIENT_ID_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    READY_REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     client_id: str
     id: int
     payload: bytes
     error: str
-    def __init__(self, client_id: _Optional[str] = ..., id: _Optional[int] = ..., payload: _Optional[bytes] = ..., error: _Optional[str] = ...) -> None: ...
+    ready_request_id: str
+    def __init__(self, client_id: _Optional[str] = ..., id: _Optional[int] = ..., payload: _Optional[bytes] = ..., error: _Optional[str] = ..., ready_request_id: _Optional[str] = ...) -> None: ...
