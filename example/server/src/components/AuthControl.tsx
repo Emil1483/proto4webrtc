@@ -15,12 +15,12 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { toastError } from "@/lib/toast";
 
 export default function AuthControl() {
   const { authenticated, authConfigured, loading, login, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Nothing to show until /api/me resolves, or when the server has no auth
@@ -30,16 +30,14 @@ export default function AuthControl() {
   const closeDialog = () => {
     setOpen(false);
     setPassword("");
-    setError("");
   };
 
   const handleLogin = async () => {
     setBusy(true);
-    setError("");
     try {
       await login(password); // reloads on success
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toastError(e); // e.g. wrong password
       setBusy(false);
     }
   };
@@ -82,8 +80,6 @@ export default function AuthControl() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !busy) handleLogin();
             }}
-            error={error !== ""}
-            helperText={error || " "}
             disabled={busy}
           />
         </DialogContent>

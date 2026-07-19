@@ -16,22 +16,26 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastError, toastSfuError } from "@/lib/toast";
 
 export default function ControlPage() {
   const [light, setLight] = useState(0);
   const [pingMs, setPingMs] = useState<number | null>(null);
-  const [rpcError, setRpcError] = useState<string | null>(null);
-  const { client, connectionState, onlineLabels } = useSfu({});
+  const { client, connectionState, onlineLabels } = useSfu(
+    {},
+    { onError: toastSfuError },
+  );
   // The service is being served while the robot produces its responses channel.
   const online = onlineLabels.has("rov_control/responses");
 
+  // SetLight is admin-only: a guest caller is rejected by the robot and the
+  // rejection travels back as a thrown rpc error — toasted here.
   const sendLight = async (intensity: number) => {
     try {
       const res = await client?.rpc.setLight({ intensity });
       if (res) setLight(res.intensity);
-      setRpcError(null);
     } catch (err) {
-      setRpcError(err instanceof Error ? err.message : String(err));
+      toastError(err);
     }
   };
   const sendPing = async () => {
@@ -39,9 +43,8 @@ export default function ControlPage() {
       const start = performance.now();
       await client?.rpc.ping({ stamp: Date.now() / 1000 });
       setPingMs(performance.now() - start);
-      setRpcError(null);
     } catch (err) {
-      setRpcError(err instanceof Error ? err.message : String(err));
+      toastError(err);
     }
   };
 
@@ -67,7 +70,6 @@ export default function ControlPage() {
           <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
             <Typography variant="h6">Control (rpc)</Typography>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-              {rpcError && <Chip label={rpcError} color="error" size="small" />}
               {pingMs !== null && (
                 <Chip label={`rtt ${pingMs.toFixed(1)} ms`} size="small" />
               )}

@@ -39,6 +39,14 @@ export interface Proto4WebrtcClientOptions {
    * the SFU. With no auth configured every peer is a robot (full access).
    */
   onConnectionState?: (state: ConnectionState) => void;
+  /**
+   * Called when a background subscription fails — e.g. the SFU rejects
+   * consuming a protected stream because the peer is not authenticated. These
+   * happen asynchronously (outside any subscribe() call), so there is nowhere
+   * to throw; without this hook they are only logged. `info.label` (data
+   * streams) or `info.kind` (media) identifies what failed.
+   */
+  onError?: (err: Error, info: { label?: string; kind?: string }) => void;
 }
 
 interface Envelope {
@@ -64,9 +72,16 @@ export class Proto4WebrtcClient {
   private device = new Device();
   private recvTransport!: types.Transport;
   private onConnectionState?: (state: ConnectionState) => void;
+  private onError?: (err: Error, info: { label?: string; kind?: string }) => void;
+  private closed = false;
 
-  private constructor(url: string, onConnectionState?: (state: ConnectionState) => void) {
+  private constructor(
+    url: string,
+    onConnectionState?: (state: ConnectionState) => void,
+    onError?: (err: Error, info: { label?: string; kind?: string }) => void,
+  ) {
     this.onConnectionState = onConnectionState;
+    this.onError = onError;
     this.ws = new WebSocket(url);
     this.ws.onmessage = (e) => {
       const msg: Envelope = JSON.parse(String(e.data));
@@ -104,7 +119,7 @@ export class Proto4WebrtcClient {
   ): Promise<Proto4WebrtcClient> {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const url = options.url ?? `${proto}://${window.location.host}/api/sfu`;
-    const client = new Proto4WebrtcClient(url, options.onConnectionState);
+    const client = new Proto4WebrtcClient(url, options.onConnectionState, options.onError);
     await new Promise<void>((resolve, reject) => {
       client.ws.onopen = () => resolve();
       client.ws.onerror = () => reject(new Error("ws error"));
@@ -196,6 +211,7 @@ export class Proto4WebrtcClient {
           .filter((dp) => dp.label === label)
           .map((dp) => dp.dataProducerId),
       consume,
+      { label },
     );
   }
 
@@ -233,6 +249,7 @@ export class Proto4WebrtcClient {
           .filter((p) => p.kind === kind)
           .map((p) => p.producerId),
       consume,
+      { kind },
     );
   }
 
@@ -403,6 +420,7 @@ export class Proto4WebrtcClient {
   }
 
   close(): void {
+    this.closed = true;
     for (const pending of this.rpcPending.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error("client closed"));
@@ -422,14 +440,22 @@ export class Proto4WebrtcClient {
       dataProducers: { dataProducerId: string; label: string }[];
     }) => string[],
     consume: (id: string) => Promise<void>,
+    context: { label?: string; kind?: string } = {},
   ): () => void {
     const seen = new Set<string>();
     const take = (id: string) => {
       if (seen.has(id)) return;
       seen.add(id);
-      consume(id).catch((err) =>
-        console.error("[proto4webrtc] consume failed:", err),
-      );
+      consume(id).catch((err) => {
+        // Re-consumed if the producer reappears (e.g. after logging in).
+        seen.delete(id);
+        if (this.closed) return; // teardown, not a real failure
+        const e = err instanceof Error ? err : new Error(String(err));
+        // Report through onError if wired; only fall back to the console when
+        // the caller has no error handler, so consumers can be toast-only.
+        if (this.onError) this.onError(e, context);
+        else console.error("[proto4webrtc] consume failed:", e);
+      });
     };
     const handler = (msg: Envelope) => {
       const id = matchEvent(msg);

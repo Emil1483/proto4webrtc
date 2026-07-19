@@ -19,6 +19,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastSfuError } from "@/lib/toast";
 
 export default function PointcloudPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,9 +29,12 @@ export default function PointcloudPage() {
 
   // Subscribes ONLY to "pointcloud"; pointcloud.latest/.hz update at
   // animation rate. Stale (out-of-order) clouds are dropped by forceInOrder.
-  const { pointcloud, connectionState, robotOnline } = useSfu({
-    pointcloud: { forceInOrder: true },
-  });
+  // pointcloud is a protected stream: not logged in => the consume is
+  // rejected and onError toasts it.
+  const { pointcloud, connectionState, robotOnline } = useSfu(
+    { pointcloud: { forceInOrder: true } },
+    { onError: toastSfuError },
+  );
   const state = connectionState;
   const hz = pointcloud.hz;
   // .slice() gives a fresh, 4-byte-aligned buffer so the Float32Array view

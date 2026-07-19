@@ -16,16 +16,19 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastError, toastSfuError } from "@/lib/toast";
 import type { Mission } from "@/gen/rov_config/mission_pb";
 
 export default function ConfiguratorPage() {
-  const { client, connectionState, onlineLabels } = useSfu({});
+  const { client, connectionState, onlineLabels } = useSfu(
+    {},
+    { onError: toastSfuError },
+  );
   const online = onlineLabels.has("configurator/responses");
 
   const [mission, setMission] = useState<Mission | null>(null);
   const [name, setName] = useState("");
   const [depths, setDepths] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Load the current mission once the service is reachable.
@@ -37,11 +40,8 @@ export default function ConfiguratorPage() {
         setMission(m);
         setName(m.name);
         setDepths(m.depths.join(", "));
-        setError(null);
       })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : String(err)),
-      );
+      .catch(toastError);
   }, [client, online]);
 
   const update = async () => {
@@ -56,10 +56,9 @@ export default function ConfiguratorPage() {
       if (parsed.some(Number.isNaN)) throw new Error("depths must be numbers");
       const m = await client.rpc.updateMission({ name, depths: parsed });
       setMission(m);
-      setError(null);
     } catch (err) {
       // Includes errors raised by the Python handler (travel back as rpc errors).
-      setError(err instanceof Error ? err.message : String(err));
+      toastError(err);
     } finally {
       setBusy(false);
     }
@@ -87,7 +86,6 @@ export default function ConfiguratorPage() {
           <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
             <Typography variant="h6">Mission</Typography>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-              {error && <Chip label={error} color="error" size="small" />}
               {mission && (
                 <Chip label={`rev ${mission.revision}`} size="small" />
               )}
