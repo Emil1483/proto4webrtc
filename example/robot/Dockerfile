@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 ENV POETRY_VIRTUALENVS_IN_PROJECT=true
 ENV POETRY_VIRTUALENVS_OPTIONS_SYSTEM_SITE_PACKAGES=true
 
-WORKDIR /ros2_ws
+WORKDIR /robot
 
 # Install Python dependencies
 COPY pyproject.toml poetry.lock* ./
@@ -24,15 +24,17 @@ RUN . /opt/ros/humble/setup.sh && \
     rosdep update && \
     rosdep install --from-paths src --ignore-src -r -y
 
+# The webrtc setup.py files import proto4webrtc_codegen at config time, so the
+# .venv site-packages must be on PYTHONPATH before colcon build runs.
+ENV PYTHONPATH=/robot/.venv/lib/python3.10/site-packages
+
 # Build the workspace
 RUN . /opt/ros/humble/setup.sh && \
     colcon build --symlink-install
 
-ENV PYTHONPATH=/ros2_ws/.venv/lib/python3.10/site-packages
-
 # Source ROS2 and workspace on every bash session
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc && \
-    echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
+    echo "source /robot/install/setup.bash" >> /root/.bashrc
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

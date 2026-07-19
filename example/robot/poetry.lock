@@ -716,7 +716,7 @@ files = [
 
 [[package]]
 name = "proto4webrtc"
-version = "1.4.0"
+version = "1.4.1"
 description = "Mediasoup producer runtime (pymediasoup) for proto4webrtc-annotated protofiles"
 optional = false
 python-versions = "<4,>=3.10"
@@ -733,16 +733,16 @@ pymediasoup = ">=1.5"
 websockets = ">=16"
 
 [package.extras]
-compiler = ["proto4webrtc-codegen (==1.4.0)"]
+compiler = ["proto4webrtc-codegen (==1.4.1)"]
 test = ["pytest (>=8)", "pytest-asyncio (>=0.24)"]
 
 [package.source]
 type = "directory"
-url = "../../../python/proto4webrtc"
+url = "../../python/proto4webrtc"
 
 [[package]]
 name = "proto4webrtc-codegen"
-version = "1.4.0"
+version = "1.4.1"
 description = "Generate mediasoup producer code (pymediasoup) from proto4webrtc-annotated protofiles"
 optional = false
 python-versions = "<4,>=3.10"
@@ -760,7 +760,7 @@ test = ["pytest (>=8)"]
 
 [package.source]
 type = "directory"
-url = "../../../python/proto4webrtc_codegen"
+url = "../../python/proto4webrtc_codegen"
 
 [[package]]
 name = "protobuf"
@@ -1201,4 +1201,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4"
-content-hash = "dddf08641168001cef51322a5c8de51a121185887b6d6696369deb4797ecceb9"
+content-hash = "294579537d1a2a747ade2021745bce9828f8ef08e5226f1708bb0834c7684763"

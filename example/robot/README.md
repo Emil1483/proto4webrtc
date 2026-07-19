@@ -22,13 +22,13 @@ Open the project in VS Code and click **Reopen in Container** when prompted (or 
 The container will automatically run:
 
 ```bash
-rosdep update && rosdep install --from-paths ros2_ws/src --ignore-src -r -y
+rosdep update && rosdep install --from-paths src --ignore-src -r -y
 ```
 
 ### 2. Build
 
 ```bash
-# In ros2_ws
+# In example/robot
 colcon build --symlink-install
 ```
 
@@ -67,7 +67,7 @@ ros2 run subscriber_pkg listener_node
 
 ## Custom message
 
-See [`ros2_ws/src/my_interfaces/msg/Greeting.msg`](ros2_ws/src/my_interfaces/msg/Greeting.msg).
+See [`src/my_interfaces/msg/Greeting.msg`](src/my_interfaces/msg/Greeting.msg).
 
 ## Cleaning the workspace
 

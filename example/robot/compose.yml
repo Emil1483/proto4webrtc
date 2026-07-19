@@ -7,4 +7,4 @@ services:
     network_mode: host
     # ROBOT_TOKEN (robot auth) comes from the single example/.env.
     env_file:
-      - ../../.env
+      - ../.env

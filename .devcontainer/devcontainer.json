@@ -26,13 +26,13 @@
         "bufbuild.vscode-buf"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/repo_root/example/robot/ros2_ws/.venv/bin/python",
-        "python.venvPath": "/repo_root/example/robot/ros2_ws",
+        "python.defaultInterpreterPath": "/repo_root/example/robot/.venv/bin/python",
+        "python.venvPath": "/repo_root/example/robot",
         "ros.distro": "humble",
-        "terminal.integrated.cwd": "/repo_root/example/robot/ros2_ws",
+        "terminal.integrated.cwd": "/repo_root/example/robot",
         "remote.autoForwardPorts": false
       }
     }
   },
-  "postCreateCommand": "rosdep update && rosdep install --from-paths /repo_root/example/robot/ros2_ws/src --ignore-src -r -y && poetry install -C /repo_root/example/robot/ros2_ws --no-root && npm --prefix /repo_root/example/server install && . /opt/ros/humble/setup.sh && cd /repo_root/example/robot/ros2_ws && colcon build --symlink-install"
+  "postCreateCommand": "rosdep update && rosdep install --from-paths /repo_root/example/robot/src --ignore-src -r -y && PYTHONPATH= poetry install -C /repo_root/example/robot --no-root && npm --prefix /repo_root/example/server install && . /opt/ros/humble/setup.sh && cd /repo_root/example/robot && PYTHONPATH=/repo_root/example/robot/.venv/lib/python3.10/site-packages:$PYTHONPATH colcon build --symlink-install"
 }

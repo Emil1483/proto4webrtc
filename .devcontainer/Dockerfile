@@ -41,7 +41,7 @@ RUN useradd -m -s /bin/bash -u 1000 $USERNAME \
 # its own clear "auth not configured" error instead of breaking the shell.
 RUN for rc in /root/.bashrc /home/$USERNAME/.bashrc; do \
     echo "source /opt/ros/humble/setup.bash" >> $rc; \
-    echo "source /repo_root/example/robot/ros2_ws/install/setup.bash 2>/dev/null || true" >> $rc; \
-    echo "export PYTHONPATH=\$PYTHONPATH:/repo_root/example/robot/ros2_ws/.venv/lib/python3.10/site-packages" >> $rc; \
+    echo "source /repo_root/example/robot/install/setup.bash 2>/dev/null || true" >> $rc; \
+    echo "export PYTHONPATH=\$PYTHONPATH:/repo_root/example/robot/.venv/lib/python3.10/site-packages" >> $rc; \
     echo "set -a; [ -f /repo_root/example/.env ] && . /repo_root/example/.env; set +a" >> $rc; \
     done

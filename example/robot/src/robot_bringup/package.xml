@@ -9,6 +9,12 @@
 
   <exec_depend>publisher_pkg</exec_depend>
   <exec_depend>subscriber_pkg</exec_depend>
+  <exec_depend>cpp_subscriber_pkg</exec_depend>
+  <exec_depend>thruster_pkg</exec_depend>
+  <exec_depend>camera_pkg</exec_depend>
+  <exec_depend>pointcloud_pkg</exec_depend>
+  <exec_depend>webrtc_streamer_pkg</exec_depend>
+  <exec_depend>webrtc_configurator_pkg</exec_depend>
   <exec_depend>ros2launch</exec_depend>
 
   <export>

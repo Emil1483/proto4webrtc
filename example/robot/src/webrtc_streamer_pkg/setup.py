@@ -19,7 +19,7 @@ package_name = 'webrtc_streamer_pkg'
 # configurator's streams.
 _here = Path(__file__).resolve().parent
 generate(
-    proto_dirs=[_here.parents[3] / 'proto'],
+    proto_dirs=[_here.parents[2] / 'proto'],
     out_dir=_here,
     include=['rov/streams/*.proto', 'rov/rpc/*.proto'],
 )

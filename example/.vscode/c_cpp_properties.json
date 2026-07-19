@@ -4,7 +4,7 @@
       "name": "Linux",
       "includePath": [
         "/opt/ros/humble/include/**",
-        "/repo_root/ros2_ws/install/*/include/**"
+        "/repo_root/example/robot/install/*/include/**"
       ],
       "compilerPath": "/usr/bin/gcc",
       "cStandard": "c23",

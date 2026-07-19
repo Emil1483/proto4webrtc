@@ -16,7 +16,7 @@ package_name = 'webrtc_configurator_pkg'
 #     reason the proto package is rov_config, not rov.config.
 _here = Path(__file__).resolve().parent
 generate(
-    proto_dirs=[_here.parents[3] / 'proto'],
+    proto_dirs=[_here.parents[2] / 'proto'],
     out_dir=_here,
     include=['rov_config/*.proto'],
     gen_package='rov_config_gen',

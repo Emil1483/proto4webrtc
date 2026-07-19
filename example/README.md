@@ -13,7 +13,7 @@ in the same ROS2 container — the split is per process, not per machine.
     `webrtc_configurator_pkg` (top-level package on purpose — both
     packages' generated code shares one `sys.path`, and two regular Python
     packages both named `rov` would shadow each other)
-- [`robot/ros2_ws`](robot) — the ROS2 workspace with both producers:
+- [`robot/`](robot) — the ROS2 workspace with both producers:
   - `webrtc_streamer_pkg` — bridges topics to the SFU; its `setup.py`
     generates with `include=['rov/streams/*.proto', 'rov/rpc/*.proto']`
   - `webrtc_configurator_pkg` — mission_status + Configurator rpc; generates
@@ -36,7 +36,7 @@ cp .env.example .env   # then fill in AUTH_PASSWORD, ROBOT_TOKEN
 cd server && npm install && npm run dev
 
 # Robot container (both producer nodes), signaling to localhost:3000
-cd robot/ros2_ws && docker compose up --build
+cd robot && docker compose up --build
 # or inside the workspace: ros2 launch robot_bringup webrtc.launch.py
 ```
 

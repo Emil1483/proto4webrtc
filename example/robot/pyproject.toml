@@ -22,8 +22,8 @@ dependencies = [
 # files. Re-run `poetry lock && poetry install --no-root` after changing
 # python/.
 [tool.poetry.dependencies]
-proto4webrtc = { path = "../../../python/proto4webrtc", develop = false }
-proto4webrtc-codegen = { path = "../../../python/proto4webrtc_codegen", develop = false }
+proto4webrtc = { path = "../../python/proto4webrtc", develop = false }
+proto4webrtc-codegen = { path = "../../python/proto4webrtc_codegen", develop = false }
 
 
 [build-system]
