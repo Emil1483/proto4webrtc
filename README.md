@@ -15,7 +15,7 @@ Both are standard protoc plugins, so they compose with protoc or
 
 Annotate messages with the options from
 [`proto4webrtc/options.proto`](proto/proto4webrtc/options.proto)
-(module `buf.build/emil1483/proto4webrtc` on the Buf Schema Registry):
+(module `buf.build/djupvik/proto4webrtc` on the Buf Schema Registry):
 
 ```proto
 syntax = "proto3";
@@ -65,7 +65,7 @@ For editor/lint support while designing, depend on the options module:
 # buf.yaml
 version: v2
 deps:
-  - buf.build/emil1483/proto4webrtc
+  - buf.build/djupvik/proto4webrtc
 ```
 
 ```sh
