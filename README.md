@@ -437,6 +437,21 @@ annotations into the descriptors it hands them. The file only matters when
 _authoring_ protofiles (BSR dep above, or the copy bundled in the pip
 package).
 
+The two languages are deliberately **asymmetric** here — get this backwards
+and it breaks:
+
+| | `proto4webrtc/options_pb*` generated? | why |
+| --- | --- | --- |
+| Python | **no** | would shadow the `proto4webrtc` runtime package (below) |
+| TypeScript | **yes** | protoc-gen-es emits `import ... from "../proto4webrtc/options_pb"` into every `*_pb.ts` that imports the options — exclude it and the typecheck fails |
+
+So on the TS side let `buf generate` compile the options module along with
+your protos (the default when the dep is in `buf.yaml`); don't filter it out.
+On the Python side the driver filters it for you: even if the file sits in
+your proto root (e.g. vendored by `buf export`) it is used as an import only,
+never a `--python_out` target. Restricting the compile set with `--include
+'yourpkg/*.proto'` also works, but is no longer required for this.
+
 `proto4webrtc/options.proto` is resolved as an _import only_ when generating
 Python — never compiled into a per-project `proto4webrtc/options_pb2.py`.
 That module already ships inside the `proto4webrtc` pip package itself

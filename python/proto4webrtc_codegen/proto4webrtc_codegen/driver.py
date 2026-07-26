@@ -87,15 +87,20 @@ def generate(proto_dirs, out_dir, include=None, gen_package=GEN_PACKAGE) -> list
             raise FileNotFoundError(
                 f"no .proto files under {proto_dirs} match {patterns}"
             )
+    # A vendored copy of the options (e.g. `buf export` into the proto root)
+    # must never become a --python_out target: the resulting
+    # proto4webrtc/options_pb2.py shadows the runtime package (see the module
+    # docstring). It stays importable — its own root is on the include path.
+    vendored_options = OPTIONS_PROTO in proto_files
+    proto_files = [f for f in proto_files if f != OPTIONS_PROTO]
     if not proto_files:
         raise FileNotFoundError(f"no .proto files under {proto_dirs}")
     if len(set(proto_files)) != len(proto_files):
         raise ValueError(f"duplicate proto paths across roots {proto_dirs}")
 
     include_dirs = [str(d) for d in proto_dirs]
-    if OPTIONS_PROTO not in proto_files:
-        # Import-only: resolved via -I, never a --python_out target (see the
-        # module docstring for why proto4webrtc/options_pb2.py must not exist).
+    if not vendored_options:
+        # Import-only: resolved via -I, never a --python_out target.
         include_dirs.append(bundled_options_include())
 
     with tempfile.NamedTemporaryFile(suffix=".binpb") as tmp:

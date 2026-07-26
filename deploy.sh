@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and publish python/ts runtime + codegen packages.
+# Build and publish python/ts runtime + codegen packages, and push the
+# options module to the BSR (buf.build/djupvik/proto4webrtc).
 # usage: ./deploy.sh              deploy current version
 #        ./deploy.sh --bump X.Y.Z bump version then deploy
 set -euo pipefail
@@ -65,6 +66,11 @@ fi
 
 DEPLOY_VERSION="$(current_py_version "$PY_RUNTIME")"
 
+echo "== checking tooling =="
+for cmd in poetry npm buf python3; do
+  command -v "$cmd" &>/dev/null || { echo "error: $cmd not found on PATH" >&2; exit 1; }
+done
+
 echo "== checking publish credentials =="
 has_pypi_token() {
   [[ -n "${POETRY_PYPI_TOKEN_PYPI:-}" ]] && return 0
@@ -85,13 +91,22 @@ if ! npm whoami &>/dev/null; then
   echo "error: not logged in to npm. Run: npm login" >&2
   exit 1
 fi
+if ! buf registry whoami &>/dev/null; then
+  echo "error: not logged in to the BSR. Run: buf registry login" >&2
+  exit 1
+fi
 
 echo "== setting up python venv =="
-VENV="$ROOT/python/.venv"
-python3 -m venv --clear "$VENV"
+# Throwaway, outside the repo: python/.venv may be the caller's activated dev
+# env (and may be where poetry itself lives) — clearing it breaks the shell
+# mid-run.
+VENV_TMP="$(mktemp -d)"
+trap 'rm -rf "$VENV_TMP"' EXIT
+VENV="$VENV_TMP/venv"
+python3 -m venv "$VENV"
 # unset PYTHONPATH so a sourced ROS/other env can't leak packages into pip or pytest
-env -u PYTHONPATH "$VENV/bin/pip" install --upgrade pip
-env -u PYTHONPATH "$VENV/bin/pip" install -e "$PY_CODEGEN" -e "$PY_RUNTIME[test]"
+env -u PYTHONPATH -u VIRTUAL_ENV "$VENV/bin/pip" install --upgrade pip
+env -u PYTHONPATH -u VIRTUAL_ENV "$VENV/bin/pip" install -e "$PY_CODEGEN" -e "$PY_RUNTIME[test]"
 
 echo "== building python packages =="
 (cd "$PY_CODEGEN" && poetry build)
@@ -101,8 +116,12 @@ echo "== building ts packages =="
 (cd "$TS_CODEGEN" && npm install)
 (cd "$TS_RUNTIME" && npm install && npm run build)
 
+echo "== linting protos =="
+(cd "$ROOT" && buf lint)
+
 echo "== running tests =="
-(cd "$PY_RUNTIME" && env -u PYTHONPATH "$VENV/bin/python" -m pytest)
+(cd "$PY_RUNTIME" && env -u PYTHONPATH -u VIRTUAL_ENV "$VENV/bin/python" -m pytest)
+(cd "$PY_CODEGEN" && env -u PYTHONPATH -u VIRTUAL_ENV "$VENV/bin/python" -m pytest)
 (cd "$TS_RUNTIME" && npm test)
 
 echo "== publishing python packages =="
@@ -112,5 +131,9 @@ echo "== publishing python packages =="
 echo "== publishing ts packages =="
 (cd "$TS_CODEGEN" && npm publish --access public)
 (cd "$TS_RUNTIME" && npm publish --access public)
+
+echo "== pushing protos to the BSR =="
+# named module only (proto/); the unnamed example/proto module is workspace-local
+(cd "$ROOT" && buf push --exclude-unnamed --label "v$DEPLOY_VERSION")
 
 echo "== done: published version $DEPLOY_VERSION =="

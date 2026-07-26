@@ -48,3 +48,27 @@ def test_generated_producers_include_rpc_service_base(tmp_path):
     assert '"Ping": ("ping", PingRequest, False)' in source
     assert "async def set_light(self, request: SetLightRequest)" in source
     assert "rov_control: RovControlBase" in source
+
+
+def test_vendored_options_proto_in_the_root_is_not_generated(tmp_path):
+    """`buf export` style vendoring puts proto4webrtc/options.proto in the
+    proto root. It must stay import-only, not become a protoc target."""
+    import shutil
+
+    root = tmp_path / "protos"
+    shutil.copytree(EXAMPLE_PROTO, root)
+    vendored = root / "proto4webrtc"
+    vendored.mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        Path(__file__).resolve().parents[3]
+        / "proto"
+        / "proto4webrtc"
+        / "options.proto",
+        vendored / "options.proto",
+    )
+
+    out = tmp_path / "out"
+    generate(proto_dirs=[root], out_dir=out)
+
+    assert not (out / "proto4webrtc").exists()
+    assert (out / "rov" / "streams" / "thrusters_pb2.py").exists()
