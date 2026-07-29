@@ -367,6 +367,201 @@ process serving them: schedule the restart (e.g. `asyncio.get_event_loop()
 .call_later(...)` or a detached docker call) and return first, or the
 response never leaves the dying process and the browser sees a timeout.
 
+## ROS2 (colcon workspaces)
+
+Nothing about the runtime is ROS-specific — an `ament_python` node just imports
+the generated package. The two things that need care are _when_ codegen runs and
+_how_ the pip dependency reaches the interpreter colcon builds against.
+
+### Generate from `setup.py`
+
+Run `generate()` at `setup.py` time, so `colcon build` is the whole workflow:
+no separate generate step to forget, no `PYTHONPATH` to export, and no way to
+build against a stale encoder. The generated packages land in a gitignored
+`gen/` and are grafted onto the package's source root:
+
+```python
+# src/my_streamer/setup.py
+import os
+from pathlib import Path
+
+from proto4webrtc_codegen import generate
+from setuptools import find_packages, setup
+
+package_name = "my_streamer"
+
+HERE = Path(__file__).parent.resolve()
+GEN_DIR = HERE / "gen"
+
+# Where the protos live. Two situations, so it can't be a fixed path:
+#   - checkout / devcontainer: up out of src/<pkg> to the repo root
+#   - inside an image: sources are copied elsewhere, so the Dockerfile exports
+#     PROTO_DIR instead.
+PROTO_DIR = Path(
+    os.environ.get("PROTO_DIR", HERE / "proto")
+).resolve()
+if not PROTO_DIR.is_dir():
+    raise SystemExit(f"{package_name}: no proto dir at {PROTO_DIR}; set PROTO_DIR")
+
+# Unconditional, and allowed to raise: reusing whatever a previous run left in
+# gen/ is the one failure mode this design exists to rule out, and a build that
+# stops with the codegen error is far easier to read than one that silently
+# succeeds against stale generated code.
+#
+# include=: this process owns only the telemetry streams — see "Multiple robot
+# producers" above. Pass gen_package= too when a second ament_python package in
+# the same workspace also generates, so the two wrapper packages don't shadow
+# each other on the shared sys.path.
+generate(PROTO_DIR, GEN_DIR, include=["telemetry/*.proto"])
+
+# Flat, so one dir per generated package grafts the two source roots together.
+generated = sorted(p.name for p in GEN_DIR.iterdir() if (p / "__init__.py").is_file())
+
+setup(
+    name=package_name,
+    version="0.1.0",
+    packages=find_packages(exclude=["test"]) + generated,
+    package_dir={pkg: f"gen/{pkg}" for pkg in generated},
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+    ],
+    install_requires=["setuptools"],
+    entry_points={
+        "console_scripts": [
+            "telemetry_streamer = my_streamer.telemetry_streamer:main",
+        ],
+    },
+)
+```
+
+A CMake (`ament_cmake`) package does the same with `execute_process` at
+_configure_ time plus `CMAKE_CONFIGURE_DEPENDS` on `*.proto`, so editing a
+proto triggers a reconfigure instead of silently keeping the old output.
+
+### Declare the dependency in `pyproject.toml`, install with uv into a venv
+
+`package.xml` cannot express this: rosdep keys resolve to apt packages, and
+neither `proto4webrtc` nor `proto4webrtc-codegen` is on apt. Declaring them
+there only makes `rosdep install` fail. So the versions live in a
+`pyproject.toml` next to the workspace, installed with [uv](https://docs.astral.sh/uv/)
+— one place to pin from, and a lockfile (`uv.lock`) that the image build and
+the devcontainer share:
+
+```toml
+# robot/pyproject.toml — no package to build, just a place to pin from
+[project]
+name = "my-robot-ws"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    # colcon belongs here, not in apt: it runs each ament_python package's
+    # setup.py with its own sys.executable, and setuptools stamps that
+    # interpreter into every console script's shebang — an apt colcon builds
+    # nodes that cannot import anything from this venv. That is exactly how
+    # `ros2 launch` fails with ModuleNotFoundError: No module named
+    # 'proto4webrtc' while `python -c "import proto4webrtc"` succeeds.
+    "colcon-common-extensions",
+    # Capped below 80: `colcon build --symlink-install` shells out to
+    # `setup.py develop --editable`, and setuptools 80 removed the develop
+    # command outright ("error: option --editable not recognized").
+    "setuptools<80",
+    # Pinned below 4 deliberately. colcon-core depends on empy unbounded and
+    # resolves 4.x, which lands in the venv and shadows the apt empy 3.3.4 that
+    # Humble's rosidl_adapter is written against. The 4.x API rename fails as
+    # `AttributeError: 'NoneType' object has no attribute 'shutdown'` in the
+    # middle of a message build, which points nowhere near the real cause.
+    "empy>=3.3.4,<4",
+
+    # Codegen, imported by setup.py at build time.
+    "proto4webrtc-codegen>=1.5.0,<2",
+]
+
+[project.optional-dependencies]
+# The producer runtime, imported by the node at run time. An extra rather than a
+# plain dependency so the deployed image can install it without build tooling.
+runtime = ["proto4webrtc>=1.5.0,<2"]
+
+[tool.uv]
+package = false
+```
+
+Create the venv with `--system-site-packages` and let it own `colcon`:
+
+```sh
+# --system-site-packages is mandatory: rclpy, rosidl_adapter's `em` and
+# ament_package are apt packages in the system dist-packages and cannot be
+# pip-installed. An isolated venv hides them and nothing builds or runs.
+# --python is pinned because uv otherwise picks the newest interpreter it finds,
+# and ROS's Python version is fixed by the distro (3.10 on Humble).
+uv venv --python /usr/bin/python3 --system-site-packages .venv
+UV_PROJECT_ENVIRONMENT=.venv uv sync --frozen --extra runtime
+
+# No activation needed if .venv/bin is first on PATH (bake `ENV PATH` in the
+# image / devcontainer so tasks and non-login shells agree on the interpreter).
+source /opt/ros/humble/setup.bash
+.venv/bin/colcon build --symlink-install
+```
+
+The venv's `colcon` is what makes `setup.py`'s `from proto4webrtc_codegen import
+generate` resolve, and what stamps the venv interpreter into the built nodes'
+shebangs so `import proto4webrtc` works at run time. Point VS Code at it with
+`"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"`.
+
+A deployed image needs neither the venv nor the codegen dist — install just
+`proto4webrtc` (see the [`example/`](example/README.md) Dockerfile) and copy in
+the `colcon build` output.
+
+### Editor support for the protofiles (VS Code)
+
+Install [`bufbuild.vscode-buf`](https://marketplace.visualstudio.com/items?itemName=bufbuild.vscode-buf).
+It drives `buf lsp`, which reads `buf.yaml`/`buf.lock` and resolves BSR imports
+like `proto4webrtc/options.proto` out of buf's own module cache — the same cache
+`buf generate` uses — so there is no include path to configure and no vendored
+copy of the deps in the tree.
+
+Two things to get right:
+
+- **Write the lockfile.** `buf dep update` resolves the `deps:` in `buf.yaml`
+  and writes `buf.lock`. Commit it — it pins the exact module commit the
+  generated code was built against.
+  ```sh
+  cd proto && buf dep update
+  ```
+- **Warm the cache before opening the editor**, or the LSP reports
+  `proto4webrtc/options.proto: does not exist` on a fresh clone / container.
+  Do it in `postCreateCommand` (or your setup script):
+  ```sh
+  cd proto && buf build --output /dev/null
+  ```
+  `buf build` rather than `buf dep update` here: it downloads exactly the
+  commits already in `buf.lock` instead of re-resolving the deps and rewriting
+  it. `--output /dev/null` throws the image away — the download is the point.
+
+The extension needs `buf` on `PATH` (or set `buf.commandLine.path`); in a
+devcontainer, copy it from the official image and list the extension in
+`devcontainer.json`:
+
+```dockerfile
+COPY --from=bufbuild/buf:1.71.0 /usr/local/bin/buf /usr/local/bin/buf
+```
+
+```jsonc
+// .devcontainer/devcontainer.json
+"customizations": {
+  "vscode": {
+    "extensions": ["bufbuild.vscode-buf", "ms-python.python"],
+    "settings": { "python.defaultInterpreterPath": "/workspace/.venv/bin/python" }
+  }
+}
+```
+
+Pin BSR deps to a release label rather than the default `main` if you need a
+specific options version, e.g. `buf.build/djupvik/proto4webrtc:v1.5.1` —
+resolving a stale `main` silently drops newer annotations (a missing
+`extend google.protobuf.MethodOptions` makes `option (proto4webrtc.protected)`
+unknown).
+
 ## Authentication
 
 **The SFU does not authenticate.** It enforces a `Role`, which your
@@ -420,17 +615,17 @@ verifies tokens.
 
 ## Options reference
 
-| Option                | Applies to | Meaning                                                                                                         |
-| --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
-| `label`               | both       | Unique mediasoup producer label; consumers select by it                                                         |
-| `delivery`            | data       | `RELIABLE_ORDERED` (default; required for >64 KiB messages) or `UNRELIABLE`                                     |
-| `backpressure`        | data       | `BUFFER_ALL` (default) or `DROP_IF_BUFFERED` (newest wins)                                                      |
-| `max_buffered_factor` | data       | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2)                                          |
-| `kind`                | media      | `VIDEO` or `AUDIO`                                                                                              |
-| `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                               |
-| `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace |
+| Option                | Applies to | Meaning                                                                                                               |
+| --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `label`               | both       | Unique mediasoup producer label; consumers select by it                                                               |
+| `delivery`            | data       | `RELIABLE_ORDERED` (default; required for >64 KiB messages) or `UNRELIABLE`                                           |
+| `backpressure`        | data       | `BUFFER_ALL` (default) or `DROP_IF_BUFFERED` (newest wins)                                                            |
+| `max_buffered_factor` | data       | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2)                                                |
+| `kind`                | media      | `VIDEO` or `AUDIO`                                                                                                    |
+| `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                                     |
+| `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace       |
 | `protected`           | data/media | Admin-only stream: the SFU denies guests `consume`/`consumeData` (enforced only when the host passes non-robot roles) |
-| `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (enforced only when the host passes non-robot roles)     |
+| `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (enforced only when the host passes non-robot roles)           |
 
 The plugins never read `options.proto` at generation time — protoc compiles
 annotations into the descriptors it hands them. The file only matters when
@@ -440,10 +635,10 @@ package).
 The two languages are deliberately **asymmetric** here — get this backwards
 and it breaks:
 
-| | `proto4webrtc/options_pb*` generated? | why |
-| --- | --- | --- |
-| Python | **no** | would shadow the `proto4webrtc` runtime package (below) |
-| TypeScript | **yes** | protoc-gen-es emits `import ... from "../proto4webrtc/options_pb"` into every `*_pb.ts` that imports the options — exclude it and the typecheck fails |
+|            | `proto4webrtc/options_pb*` generated? | why                                                                                                                                                   |
+| ---------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Python     | **no**                                | would shadow the `proto4webrtc` runtime package (below)                                                                                               |
+| TypeScript | **yes**                               | protoc-gen-es emits `import ... from "../proto4webrtc/options_pb"` into every `*_pb.ts` that imports the options — exclude it and the typecheck fails |
 
 So on the TS side let `buf generate` compile the options module along with
 your protos (the default when the dep is in `buf.yaml`); don't filter it out.
