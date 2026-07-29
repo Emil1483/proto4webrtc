@@ -39,6 +39,15 @@ def generate_launch_description():
             #     respawn=True,
             #     respawn_delay=2.0,
             # ),
+            # The far end of the relayed Greeter rpc: a plain ROS2 service
+            # server on /greet. The streamer node forwards the browser's call
+            # to it, so this node has to be up for /greeter to answer.
+            Node(
+                package="publisher_pkg",
+                executable="greet_service_node",
+                respawn=True,
+                respawn_delay=2.0,
+            ),
             # Sensor nodes: thruster, camera, pointcloud.
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(

@@ -28,15 +28,16 @@ class ThrusterNode(Node):
 
     def tick(self):
         self.t += self.dt
+        # my_interfaces/msg/Thrusters is generated from
+        # proto/rov/streams/thrusters.proto, so the field names are the proto's:
+        # a float64 `stamp` (seconds since epoch) instead of a std_msgs/Header,
+        # and one field per thruster.
         msg = Thrusters()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "thrusters"
-        msg.values = [
-            math.sin(2 * math.pi * 0.5 * self.t),
-            math.sin(2 * math.pi * 0.7 * self.t + 1.0),
-            math.cos(2 * math.pi * 0.3 * self.t),
-            0.5 * math.sin(2 * math.pi * 1.1 * self.t),
-        ]
+        msg.stamp = self.get_clock().now().nanoseconds * 1e-9
+        msg.value0 = math.sin(2 * math.pi * 0.5 * self.t)
+        msg.value1 = math.sin(2 * math.pi * 0.7 * self.t + 1.0)
+        msg.value2 = math.cos(2 * math.pi * 0.3 * self.t)
+        msg.value3 = 0.5 * math.sin(2 * math.pi * 1.1 * self.t)
         self.publisher.publish(msg)
 
 

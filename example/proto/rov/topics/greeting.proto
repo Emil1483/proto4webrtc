@@ -1,0 +1,21 @@
+// A ROS2-only message: no proto4webrtc annotation, so no producer/consumer
+// code is generated from it at all. It exists here because /proto is the single
+// source of truth for the robot's data shapes -- my_interfaces generates
+// my_interfaces/msg/Greeting.msg from this file (see robot/src/my_interfaces),
+// and the pub/sub demo nodes (publisher_pkg, subscriber_pkg,
+// cpp_subscriber_pkg) use that.
+//
+// Nothing about the ROS2 interface generator requires the annotations: plain
+// protos map to .msg/.srv just the same.
+
+syntax = "proto3";
+
+package rov.topics;
+
+message Greeting {
+  // Node name of the publisher.
+  string sender = 1;
+  string message = 2;
+  // Monotonic counter, bumped per publish.
+  int32 count = 3;
+}

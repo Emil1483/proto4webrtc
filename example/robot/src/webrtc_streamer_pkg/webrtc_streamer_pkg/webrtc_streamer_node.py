@@ -7,6 +7,10 @@ The robot side of the SFU. Connects to the mediasoup signaling endpoint and
   * /thrusters         (my_interfaces/Thrusters)     -> thrusters "telemetry" (unreliable)
   * /pointcloud/points (sensor_msgs/PointCloud2)     -> point_cloud "pointcloud" (reliable)
 
+and serves two rpc services: RovControl (handled here) and Greeter (relayed to
+the ROS2 service /greet, i.e. answered by publisher_pkg's greet_service_node --
+see the Greeter class).
+
 Proto4WebrtcProducer (pip package proto4webrtc) owns signaling, the mediasoup
 device/transport lifecycle, and the reconnect loop. Point clouds require the
 packed little-endian float32 x,y,z layout pointcloud_node publishes. The
@@ -21,6 +25,7 @@ the main thread. send()/push() are safe to call from the ROS callback thread
 directly — no manual thread-marshaling needed.
 """
 
+import asyncio
 import os
 import threading
 
@@ -31,8 +36,12 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import Image, PointCloud2
 from my_interfaces.msg import Thrusters as RosThrusters
+from my_interfaces.srv import Greet as RosGreet
 
 from proto4webrtc_gen import (
+    GreeterBase,
+    GreetRequest,
+    GreetResponse,
     PingRequest,
     PingResponse,
     PointCloud,
@@ -65,6 +74,49 @@ class RovControl(RovControlBase):
         return PingResponse(stamp=request.stamp)
 
 
+class Greeter(GreeterBase):
+    """Relay: browser rpc -> the ROS2 service /greet -> greet_service_node.
+
+    Nothing is computed here. my_interfaces/srv/Greet is generated from the same
+    proto/rov/rpc/greeter.proto that generated this rpc's request/response, so
+    the two shapes match field for field and the handler only has to forward.
+
+    The ROS2 client's future is completed by the executor on the rclpy spin
+    thread (see main()), while this coroutine runs on the producer's asyncio
+    loop, so it polls the future instead of blocking the loop -- calling
+    rclpy.spin_until_future_complete() from here would deadlock the loop that
+    the WebRTC channels themselves run on.
+    """
+
+    TIMEOUT_S = 5.0
+    POLL_S = 0.01
+
+    def __init__(self, node: Node):
+        super().__init__()
+        self._node = node
+        self._client = node.create_client(RosGreet, "greet")
+
+    async def greet(self, request: GreetRequest) -> GreetResponse:
+        if not self._client.service_is_ready():
+            # Raised, not swallowed: the exception travels back to the browser
+            # as an rpc error, so the GUI can say the service is down.
+            raise RuntimeError("ROS2 service /greet is not available")
+
+        future = self._client.call_async(RosGreet.Request(name=request.name))
+        waited = 0.0
+        while not future.done():
+            if waited >= self.TIMEOUT_S:
+                future.cancel()
+                raise TimeoutError(f"/greet did not answer in {self.TIMEOUT_S:.0f} s")
+            await asyncio.sleep(self.POLL_S)
+            waited += self.POLL_S
+
+        result = future.result()
+        assert result is not None, "ROS2 service /greet returned None"
+        self._node.get_logger().info(f"greet relayed: {result.message}")
+        return GreetResponse(message=result.message, count=result.count)
+
+
 class WebRtcStreamerNode(Node):
     def __init__(self):
         super().__init__("webrtc_streamer_node")
@@ -80,6 +132,8 @@ class WebRtcStreamerNode(Node):
             signaling_url=signaling_url,
             token=token or None,
             rov_control=RovControl(self),
+            # Served by another node entirely: this one only relays (see Greeter).
+            greeter=Greeter(self),
             logger=self.get_logger(),
         )
 
@@ -103,15 +157,15 @@ class WebRtcStreamerNode(Node):
         self.client.camera_stream.push(arr)
 
     def on_thrusters(self, msg: RosThrusters):
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        values = list(msg.values)
+        # my_interfaces/msg/Thrusters is generated from the same proto as the
+        # protobuf Thrusters below, so this is a field-for-field copy.
         self.client.thrusters.send(
             Thrusters(
-                stamp=stamp,
-                value0=values[0],
-                value1=values[1],
-                value2=values[2],
-                value3=values[3],
+                stamp=msg.stamp,
+                value0=msg.value0,
+                value1=msg.value1,
+                value2=msg.value2,
+                value3=msg.value3,
             )
         )
 

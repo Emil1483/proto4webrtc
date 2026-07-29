@@ -4,7 +4,7 @@ Define your WebRTC data/media streams once in protobuf, generate typed
 [mediasoup](https://mediasoup.org/) code for both ends:
 
 - **Python producer runtime** (robot / backend, [pymediasoup](https://github.com/skymaze/pymediasoup)) — pip package [`proto4webrtc`](https://pypi.org/project/proto4webrtc/) (`python/proto4webrtc`)
-- **Python code generator** — pip package [`proto4webrtc-codegen`](https://pypi.org/project/proto4webrtc-codegen/) (`python/proto4webrtc_codegen`), pulled in by `pip install proto4webrtc[compiler]`
+- **Python code generator** — pip package [`proto4webrtc-codegen`](https://pypi.org/project/proto4webrtc-codegen/) (`python/proto4webrtc_codegen`), pulled in by `pip install proto4webrtc[compiler]`; its `.ros2` module also renders ROS2 `.msg`/`.srv` (see [ROS2](#ros2-colcon-workspaces))
 - **TypeScript consumer generator** (browser, [mediasoup-client](https://www.npmjs.com/package/mediasoup-client)) — npm package [`protoc-gen-proto4webrtc-ts`](https://www.npmjs.com/package/protoc-gen-proto4webrtc-ts) (`ts/proto4webrtc_codegen`)
 - **TypeScript SFU runtime** (server, [mediasoup](https://mediasoup.org/)) — npm package [`proto4webrtc`](https://www.npmjs.com/package/proto4webrtc) (`ts/proto4webrtc`)
 
@@ -437,7 +437,124 @@ setup(
 
 A CMake (`ament_cmake`) package does the same with `execute_process` at
 _configure_ time plus `CMAKE_CONFIGURE_DEPENDS` on `*.proto`, so editing a
-proto triggers a reconfigure instead of silently keeping the old output.
+proto triggers a reconfigure instead of silently keeping the old output — which
+is exactly how the interface package below is built.
+
+### Generate the ROS2 interfaces from the same protos
+
+`proto4webrtc_codegen.ros2` renders ROS2 `.msg` and `.srv` files, so the
+protofiles are the single source of truth for the ROS graph too — no
+hand-maintained interface package drifting from the wire contract. It needs no
+proto4webrtc annotation to work, so ROS-only types (a message no stream
+produces) belong in the same tree.
+
+Run it from an `ament_cmake` interface package at _configure_ time. Only
+`CMakeLists.txt` and `package.xml` are committed; `msg/` and `srv/` are
+generated and gitignored:
+
+```cmake
+# src/my_interfaces/CMakeLists.txt
+cmake_minimum_required(VERSION 3.8)
+project(my_interfaces)
+
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(PROTO_DIR "$ENV{PROTO_DIR}")  # or a path relative to CMAKE_CURRENT_SOURCE_DIR
+
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" -m proto4webrtc_codegen.ros2
+          --proto "${PROTO_DIR}" --out "${CMAKE_CURRENT_SOURCE_DIR}"
+  RESULT_VARIABLE _gen_result
+)
+# Fatal on purpose: continuing would build whatever msg/ and srv/ a previous run
+# left behind, the one failure mode generating at build time exists to rule out.
+if(NOT _gen_result EQUAL 0)
+  message(FATAL_ERROR "my_interfaces: codegen failed (exit ${_gen_result})")
+endif()
+
+# Reconfigure -- and so regenerate -- when a proto changes. Without this, editing
+# a proto and rebuilding silently keeps the old interfaces.
+file(GLOB_RECURSE _protos CONFIGURE_DEPENDS "${PROTO_DIR}/*.proto")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_protos})
+
+file(GLOB _interfaces RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" msg/*.msg srv/*.srv)
+list(SORT _interfaces)
+rosidl_generate_interfaces(${PROJECT_NAME} ${_interfaces})
+
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
+```
+
+`--include 'telemetry/*.proto'` narrows the set (imports still resolve),
+`--no-services` skips `.srv`, and `--srv-prefix-service` names srv files
+`<Service><Method>.srv` for when two services share a method name. Unchanged
+files are not rewritten (an unchanged proto costs no rosidl rebuild), and files
+the generator wrote before but no longer would are removed — hand-written
+interfaces beside them are left alone.
+
+The mapping:
+
+| proto | ROS2 |
+| --- | --- |
+| `message Foo` | `msg/Foo.msg` |
+| nested `Foo.Bar` | `msg/FooBar.msg` (one flat namespace, so names must be globally unique) |
+| `rpc Do(DoRequest) returns (DoResponse)` | `srv/Do.srv`, request fields above `---`, response below |
+| scalar fields | same width/signedness (`sint32` → `int32`; the zigzag is a wire detail) |
+| `bytes` | `uint8[]` |
+| `repeated T` | `T[]` |
+| enum field | `int32` field + an `UPPER_SNAKE` constants block, proto's numbers |
+
+A message that exists only to be an rpc payload (`*Request`/`*Response` by
+name, or empty) gets no `.msg` — it is rendered into its `.srv`. One that is
+also a field type elsewhere keeps its `.msg`. Declaration-only
+`(proto4webrtc.media_stream)` messages are skipped: RTP frames never travel as
+protobuf.
+
+What it refuses, rather than approximating: `oneof` (flattening loses the
+exactly-one-set invariant), `map<>`, `repeated bytes` (a nested array), streaming
+rpcs, references into files the target set leaves out, field names that aren't
+`lower_snake_case` or that are C++/Python keywords, non-`CamelCase` message
+names, and colliding flattened names. Each raises with the `.proto` and field
+named, at configure time — not as an opaque failure inside `rosidl`.
+
+### Relaying an rpc to a plain ROS2 service
+
+Because both sides come from one definition, the node holding the WebRTC
+connection doesn't have to implement the rpc: it can forward the call to the
+generated ROS2 service and let whichever node owns the logic answer. The
+producer node becomes a thin relay.
+
+```python
+class Greeter(GreeterBase):
+    """browser -> this node -> ROS2 service /greet -> the node that owns it."""
+
+    def __init__(self, node: Node):
+        super().__init__()
+        self._node = node
+        self._client = node.create_client(RosGreet, "greet")  # my_interfaces/srv/Greet
+
+    async def greet(self, request: GreetRequest) -> GreetResponse:
+        if not self._client.service_is_ready():
+            # Raised, not swallowed: it reaches the browser as an rpc error.
+            raise RuntimeError("ROS2 service /greet is not available")
+        future = self._client.call_async(RosGreet.Request(name=request.name))
+        # Polled, not spin_until_future_complete(): this coroutine runs on the
+        # producer's asyncio loop (the one the data channels live on) while the
+        # future is completed by the executor on the rclpy spin thread —
+        # blocking here would deadlock the loop.
+        while not future.done():
+            await asyncio.sleep(0.01)
+        result = future.result()
+        return GreetResponse(message=result.message, count=result.count)
+```
+
+Handler exceptions and timeouts travel back to the caller as rpc errors, so the
+GUI can tell "the producer node is down" (the `<label>/responses` label goes
+offline) from "the producer is up but the service node isn't" (the call rejects).
+A worked version — browser page, relay, and the ROS2 service server as a
+separate node — is in [`example/`](example/README.md).
 
 ### Declare the dependency in `pyproject.toml`, install with uv into a venv
 

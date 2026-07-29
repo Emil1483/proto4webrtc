@@ -3,14 +3,20 @@
 <package format="3">
   <name>my_interfaces</name>
   <version>0.0.1</version>
-  <description>Custom message definitions for the learnros project</description>
+  <description>
+    Messages and services generated from ../../../proto by
+    proto4webrtc_codegen.ros2 at CMake configure time (see CMakeLists.txt).
+  </description>
   <maintainer email="emil@djupvik.dev">user</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
-  <depend>std_msgs</depend>
+  <!-- proto4webrtc-codegen is a pip dist, not a rosdep key: declaring it here
+       would only make `rosdep install` fail. The robot image installs it (see
+       robot/Dockerfile); the generator runs under the same interpreter CMake
+       finds as Python3_EXECUTABLE. -->
 
   <exec_depend>rosidl_default_runtime</exec_depend>
 

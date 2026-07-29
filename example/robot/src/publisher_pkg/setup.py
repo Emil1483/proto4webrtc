@@ -14,11 +14,12 @@ setup(
     zip_safe=True,
     maintainer='user',
     maintainer_email='user@example.com',
-    description='A node that publishes Greeting messages',
+    description='Greeting publisher, plus the /greet service the browser rpc relays to',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
             'greeter_node = publisher_pkg.greeter_node:main',
+            'greet_service_node = publisher_pkg.greet_service_node:main',
         ],
     },
 )

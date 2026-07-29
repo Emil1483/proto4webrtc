@@ -18,4 +18,21 @@ needs to import it.
 Also installs the raw protoc plugin `protoc-gen-proto4webrtc_python`
 (`--proto4webrtc_python_out`).
 
+## ROS2 interfaces
+
+`proto4webrtc_codegen.ros2` renders ROS2 `.msg`/`.srv` from the same protos, so
+an ament interface package can be generated at `colcon build` time instead of
+hand-maintained. Optional and dependency-free — nothing imports it unless you
+do — and the proto4webrtc annotations are not required, so it also works on
+plain protos:
+
+```sh
+python -m proto4webrtc_codegen.ros2 --proto path/to/protos --out src/my_interfaces
+```
+
+Writes `msg/<Message>.msg` and `srv/<RpcMethod>.srv` under `--out`, removing
+generated files that are no longer produced and leaving hand-written ones alone.
+Full docs (CMake boilerplate, the mapping, and what it refuses to translate):
+https://github.com/Emil1483/proto4webrtc
+
 Full docs: https://github.com/Emil1483/proto4webrtc

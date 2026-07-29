@@ -33,6 +33,7 @@ const TELEMETRY_PROCESS: Entry[] = [
   { label: "camera", kind: "media", href: "/camera", description: "VP8 video over RTP" },
   { label: "pointcloud", kind: "data", href: "/pointcloud", description: "Packed float32 clouds, newest wins" },
   { label: "rov_control", kind: "rpc", href: "/control", description: "RovControl: Ping, SetLight" },
+  { label: "greeter", kind: "rpc", href: "/greeter", description: "Greeter: Greet, relayed to the ROS2 service /greet" },
 ];
 
 // Owned by webrtc_configurator_pkg (generated from rov_config).

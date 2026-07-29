@@ -6,16 +6,25 @@ in the same ROS2 container — the split is per process, not per machine.
 
 ## Layout
 
-- [`proto/`](proto) — the stream declarations, split by owning process:
-  - `rov/streams` + `rov/rpc` — telemetry, camera, pointcloud, RovControl
-    rpc; owned by `webrtc_streamer_pkg`
+- [`proto/`](proto) — the declarations, split by owning process:
+  - `rov/streams` + `rov/rpc` — telemetry, camera, pointcloud, RovControl and
+    Greeter rpc; owned by `webrtc_streamer_pkg`
   - `rov_config` — mission_status heartbeat + Configurator rpc; owned by
     `webrtc_configurator_pkg` (top-level package on purpose — both
     packages' generated code shares one `sys.path`, and two regular Python
     packages both named `rov` would shadow each other)
+  - `rov/topics` — `Greeting`, a ROS2-only message with no proto4webrtc
+    annotation at all: nothing produces it over WebRTC, it just becomes
+    `my_interfaces/msg/Greeting`
 - [`robot/`](robot) — the ROS2 workspace with both producers:
+  - `my_interfaces` — every `.msg`/`.srv` in the workspace, generated from
+    `proto/` by `proto4webrtc_codegen.ros2` at CMake configure time (so
+    `colcon build` regenerates; `msg/` and `srv/` are gitignored)
   - `webrtc_streamer_pkg` — bridges topics to the SFU; its `setup.py`
     generates with `include=['rov/streams/*.proto', 'rov/rpc/*.proto']`
+  - `publisher_pkg` — `greeter_node` publishes `/greetings`;
+    `greet_service_node` serves the ROS2 service `/greet` that the streamer
+    relays browser Greeter rpcs to
   - `webrtc_configurator_pkg` — mission_status + Configurator rpc; generates
     with `include=['rov_config/*.proto']` and
     `gen_package='rov_config_gen'` (its own wrapper-package name, same
@@ -37,7 +46,10 @@ cd server && npm install && npm run dev
 
 # Robot container (both producer nodes), signaling to localhost:3000
 cd robot && docker compose up --build
-# or inside the workspace: ros2 launch robot_bringup webrtc.launch.py
+# or inside the workspace: ros2 launch robot_bringup all_nodes.launch.py
+# (webrtc.launch.py starts only the two producers — no sensors, and no
+#  greet_service_node, so /greeter's Greet rejects with "/greet is not
+#  available")
 ```
 
 `example/.env` is auto-sourced inside the devcontainer (every terminal, so
@@ -57,9 +69,47 @@ kill one node and only its group goes down). Clicking a card opens its page:
 - `/camera` — VP8 video
 - `/pointcloud` — 3D cloud viewer, selective subscribe
 - `/control` — RovControl rpc (Ping, SetLight) → streamer node
+- `/greeter` — Greeter rpc (Greet), relayed by the streamer node to the ROS2
+  service `/greet` → `greet_service_node`
 - `/mission` — the configurator's 1 Hz heartbeat stream
 - `/configurator` — Configurator rpc (GetMission/UpdateMission); updates
   show up on `/mission` within a second
+
+## ROS2 interfaces from the same protos
+
+`my_interfaces` holds no hand-written interface files. Its `CMakeLists.txt`
+runs `python -m proto4webrtc_codegen.ros2 --proto ../../../proto --out .` at
+CMake **configure** time, so every `colcon build` regenerates `msg/` and `srv/`
+from `proto/`, and `CMAKE_CONFIGURE_DEPENDS` on the protos makes a proto edit
+trigger the reconfigure. Both are gitignored; committing them would just be a
+second copy of the contract.
+
+So one proto edit reaches three places: `my_interfaces` (ROS2 types), the
+producer packages' `proto4webrtc_gen` (WebRTC), and the GUI's `src/gen`. That is
+why `thruster_node` publishes a `stamp` field instead of a `std_msgs/Header` —
+`my_interfaces/msg/Thrusters` is generated from `rov/streams/thrusters.proto`,
+so the ROS message and the protobuf message are field-for-field identical and
+`webrtc_streamer_node.on_thrusters` is a plain copy.
+
+**The relayed rpc.** `/greeter` in the GUI shows an rpc served by a node that
+knows nothing about WebRTC:
+
+```
+browser  --Greeter.Greet (WebRTC data channel)-->  webrtc_streamer_node
+                                                        |
+                              my_interfaces/srv/Greet    | ROS2 service /greet
+                                                        v
+                                                  greet_service_node
+```
+
+Both hops come from the same `proto/rov/rpc/greeter.proto`: the WebRTC rpc from
+`proto4webrtc_codegen`, `my_interfaces/srv/Greet` from
+`proto4webrtc_codegen.ros2`. The streamer's handler (`Greeter` in
+`webrtc_streamer_node.py`) only forwards, and raises when the service is
+unavailable or slow — the browser sees that as an rpc error. Kill
+`greet_service_node` and `/greeter` stays *online* (the streamer still produces
+the channel) but every Greet rejects; kill the streamer and the label itself
+goes offline.
 
 ## Authentication
 

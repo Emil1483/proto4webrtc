@@ -1,0 +1,38 @@
+// Rpc the browser calls, answered by a *different ROS2 node* than the one that
+// serves the WebRTC channel.
+//
+// The streamer node produces the "greeter" channels like any other rpc service,
+// but its handler does no work itself: it calls the ROS2 service /greet
+// (my_interfaces/srv/Greet, generated from this same file) and returns whatever
+// that node answers. So the browser reaches a plain ROS2 service server —
+// greet_service_node in publisher_pkg — which knows nothing about WebRTC.
+//
+// That is the general pattern for putting rpcs where the logic already lives:
+// one proto definition becomes both the WebRTC rpc (proto4webrtc_codegen) and
+// the ROS2 service (proto4webrtc_codegen.ros2), and the producer node is a thin
+// relay between them.
+
+syntax = "proto3";
+
+package rov.rpc;
+
+import "proto4webrtc/options.proto";
+
+message GreetRequest {
+  // Who is saying hello, e.g. the browser's session name.
+  string name = 1;
+}
+
+message GreetResponse {
+  // The greeting composed by the ROS2 node that served the call.
+  string message = 1;
+  // How many greetings that node has served since it started.
+  int32 count = 2;
+}
+
+service Greeter {
+  option (proto4webrtc.rpc_service) = {label: "greeter"};
+
+  // Relayed: streamer node -> ROS2 service /greet -> greet_service_node.
+  rpc Greet(GreetRequest) returns (GreetResponse);
+}
