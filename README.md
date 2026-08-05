@@ -377,59 +377,55 @@ _how_ the pip dependency reaches the interpreter colcon builds against.
 
 Run `generate()` at `setup.py` time, so `colcon build` is the whole workflow:
 no separate generate step to forget, no `PYTHONPATH` to export, and no way to
-build against a stale encoder. The generated packages land in a gitignored
-`gen/` and are grafted onto the package's source root:
+build against a stale encoder. Generate straight into the package's own
+directory — the generated top-level packages (e.g. `rov`, `proto4webrtc`,
+`proto4webrtc_gen`) land beside `my_streamer/` and are picked up by the
+ordinary `find_packages()` call below, no `package_dir` grafting needed:
 
 ```python
 # src/my_streamer/setup.py
-import os
 from pathlib import Path
 
-from proto4webrtc_codegen import generate
 from setuptools import find_packages, setup
 
-package_name = "my_streamer"
+from proto4webrtc_codegen import generate
 
-HERE = Path(__file__).parent.resolve()
-GEN_DIR = HERE / "gen"
+package_name = 'my_streamer'
 
-# Where the protos live. Two situations, so it can't be a fixed path:
-#   - checkout / devcontainer: up out of src/<pkg> to the repo root
-#   - inside an image: sources are copied elsewhere, so the Dockerfile exports
-#     PROTO_DIR instead.
-PROTO_DIR = Path(
-    os.environ.get("PROTO_DIR", HERE / "proto")
-).resolve()
-if not PROTO_DIR.is_dir():
-    raise SystemExit(f"{package_name}: no proto dir at {PROTO_DIR}; set PROTO_DIR")
-
-# Unconditional, and allowed to raise: reusing whatever a previous run left in
-# gen/ is the one failure mode this design exists to rule out, and a build that
-# stops with the codegen error is far easier to read than one that silently
-# succeeds against stale generated code.
+# Regenerate the stream code (pb2 messages + mediasoup producer wrappers)
+# from the repo's protofiles on every build. proto4webrtc/options.proto is
+# bundled with the pip package and added to the include path automatically.
+# The generated top-level packages land next to my_streamer/ and are picked
+# up by find_packages() below.
 #
-# include=: this process owns only the telemetry streams — see "Multiple robot
+# include: this process owns only the telemetry streams — see "Multiple robot
 # producers" above. Pass gen_package= too when a second ament_python package in
 # the same workspace also generates, so the two wrapper packages don't shadow
 # each other on the shared sys.path.
-generate(PROTO_DIR, GEN_DIR, include=["telemetry/*.proto"])
-
-# Flat, so one dir per generated package grafts the two source roots together.
-generated = sorted(p.name for p in GEN_DIR.iterdir() if (p / "__init__.py").is_file())
+_here = Path(__file__).resolve().parent
+generate(
+    proto_dirs=[_here.parents[2] / 'proto'],
+    out_dir=_here,
+    include=['telemetry/*.proto'],
+)
 
 setup(
     name=package_name,
-    version="0.1.0",
-    packages=find_packages(exclude=["test"]) + generated,
-    package_dir={pkg: f"gen/{pkg}" for pkg in generated},
+    version='0.0.1',
+    packages=find_packages(exclude=['test']),
     data_files=[
-        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
-        ("share/" + package_name, ["package.xml"]),
+        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=["setuptools"],
+    install_requires=['setuptools'],
+    zip_safe=True,
+    maintainer='user',
+    maintainer_email='you@example.com',
+    description='Bridges ROS2 topics to the server over WebRTC (aiortc peer)',
+    license='Apache-2.0',
     entry_points={
-        "console_scripts": [
-            "telemetry_streamer = my_streamer.telemetry_streamer:main",
+        'console_scripts': [
+            'telemetry_streamer = my_streamer.telemetry_streamer:main',
         ],
     },
 )
