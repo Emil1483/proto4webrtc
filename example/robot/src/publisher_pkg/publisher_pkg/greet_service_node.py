@@ -2,7 +2,7 @@
 
 It knows nothing about WebRTC, proto4webrtc or the SFU: it serves
 my_interfaces/srv/Greet on /greet, and that interface happens to be generated
-from proto/rov/rpc/greeter.proto by proto4webrtc_codegen.ros2. The streamer node
+from proto/rov/rpc/greeter.proto by proto4webrtc_codegen.ros2. rpc_node
 (webrtc_streamer_pkg) implements the browser-facing Greeter rpc by calling this
 service and returning its answer, so browser calls land here.
 

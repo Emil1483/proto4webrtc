@@ -72,3 +72,50 @@ def test_vendored_options_proto_in_the_root_is_not_generated(tmp_path):
 
     assert not (out / "proto4webrtc").exists()
     assert (out / "rov" / "streams" / "thrusters_pb2.py").exists()
+
+
+def test_generated_client_can_own_a_subset_of_the_streams(tmp_path):
+    """Several producer processes off ONE bundle: each picks its labels with
+    streams=[...] instead of each generating from its own proto subset."""
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    # the (attr, label, class) registry streams= resolves against
+    assert '("thrusters", "telemetry", ThrustersProducer)' in source
+    assert '("camera_stream", "camera", CameraStreamProducer)' in source
+    assert "def __init__(self, signaling_url: str, *, streams=None," in source
+    assert "selected = select_streams(streams, self._STREAMS)" in source
+    # unselected streams become a loud placeholder, not a silent no-op
+    assert (
+        'self.thrusters = ThrustersProducer(self) if "thrusters" in selected '
+        'else UnselectedStream("telemetry", "thrusters", "ThrustersProducer")'
+    ) in source
+    # ... and a media stream's track is only created when it is selected
+    assert (
+        'self._camera_stream_track = FrameTrack(kind="video", clock_rate=90000) '
+        'if "camera_stream" in selected else None'
+    ) in source
+
+
+def test_generated_rpc_services_are_optional(tmp_path):
+    """An rpc-only or stream-only process passes just what it serves."""
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    assert "rov_control: RovControlBase | None = None" in source
+    assert "configurator: ConfiguratorBase | None = None" in source
+    assert (
+        "self._rpc_services = [s for s in (self.rov_control, self.greeter, "
+        "self.configurator, ) if s is not None]"
+    ) in source
+
+
+def test_one_bundle_holds_every_stream_it_was_generated_from(tmp_path):
+    """Without include=, the whole tree lands in one bundle; with include= only
+    the matching protos do — either way the processes sharing that bundle split
+    it with streams=."""
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    for label in ("telemetry", "camera", "pointcloud", "mission_status"):
+        assert f'"{label}", ' in source or f'"{label}")' in source

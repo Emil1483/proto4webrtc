@@ -2,7 +2,7 @@
 
 // RovControl rpc console (moved from the old homescreen). Calls travel
 // browser -> robot over WebRTC data channels; the typed client.rpc.* methods
-// are generated from the RovControl service. Served by the streamer node.
+// are generated from the RovControl service. Served by rpc_node.
 
 import { useState } from "react";
 import NextLink from "next/link";

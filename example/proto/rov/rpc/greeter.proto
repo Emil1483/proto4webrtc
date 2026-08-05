@@ -1,7 +1,7 @@
 // Rpc the browser calls, answered by a *different ROS2 node* than the one that
 // serves the WebRTC channel.
 //
-// The streamer node produces the "greeter" channels like any other rpc service,
+// The rpc node produces the "greeter" channels like any other rpc service,
 // but its handler does no work itself: it calls the ROS2 service /greet
 // (my_interfaces/srv/Greet, generated from this same file) and returns whatever
 // that node answers. So the browser reaches a plain ROS2 service server —
@@ -33,6 +33,6 @@ message GreetResponse {
 service Greeter {
   option (proto4webrtc.rpc_service) = {label: "greeter"};
 
-  // Relayed: streamer node -> ROS2 service /greet -> greet_service_node.
+  // Relayed: rpc_node -> ROS2 service /greet -> greet_service_node.
   rpc Greet(GreetRequest) returns (GreetResponse);
 }

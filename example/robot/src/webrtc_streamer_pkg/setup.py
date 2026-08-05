@@ -9,14 +9,18 @@ package_name = 'webrtc_streamer_pkg'
 # Regenerate the stream code (pb2 messages + mediasoup producer wrappers)
 # from the repo's protofiles on every build. proto4webrtc/options.proto is
 # bundled with the pip package and added to the include path automatically.
-# The generated top-level packages (rov, proto4webrtc, proto4webrtc_gen) land
-# next to webrtc_streamer_pkg/ and are picked up by find_packages() below.
+# The generated top-level packages (rov, proto4webrtc_gen) land next to
+# webrtc_streamer_pkg/ and are picked up by find_packages() below.
 #
-# include: this process owns only the telemetry/media streams and the
-# RovControl rpc — rov_config belongs to webrtc_configurator_pkg. The
-# producer runtime produces every stream in its generated code, so
-# generating from the full proto root here would duplicate the
-# configurator's streams.
+# include: only the protos this package's nodes actually need -- rov/streams
+# (telemetry, camera, pointcloud) and rov/rpc (RovControl, Greeter). rov_config
+# belongs to webrtc_configurator_pkg, which generates its own bundle. Keeping
+# the include tight means an unrelated proto can't drag encoder code, ROS
+# dependencies or rebuild churn into this package.
+#
+# The three nodes here SHARE this one bundle: each names the labels it owns
+# with Proto4WebrtcProducer(streams=[...]), so they are separate processes
+# (camera dying leaves telemetry publishing) without being separate packages.
 _here = Path(__file__).resolve().parent
 generate(
     proto_dirs=[_here.parents[2] / 'proto'],
@@ -36,11 +40,13 @@ setup(
     zip_safe=True,
     maintainer='user',
     maintainer_email='emil@djupvik.dev',
-    description='Bridges ROS2 topics to the server over WebRTC (aiortc peer)',
+    description='Bridges ROS2 topics to the server over WebRTC (aiortc peers): camera, telemetry and rpc nodes',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'webrtc_streamer_node = webrtc_streamer_pkg.webrtc_streamer_node:main',
+            'camera_node = webrtc_streamer_pkg.camera_node:main',
+            'telemetry_node = webrtc_streamer_pkg.telemetry_node:main',
+            'rpc_node = webrtc_streamer_pkg.rpc_node:main',
         ],
     },
 )

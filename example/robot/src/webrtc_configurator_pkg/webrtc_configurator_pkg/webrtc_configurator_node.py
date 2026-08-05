@@ -1,17 +1,18 @@
-"""Configurator node — the SECOND WebRTC producer on the robot.
+"""Configurator node — a WebRTC producer in a package of its own.
 
-Runs beside webrtc_streamer_node (same container, separate process) and
-connects to the same SFU. It owns only the streams generated from
-rov_config (note the import: rov_config_gen, this package's own generated
-wrapper — see setup.py):
+Runs beside the webrtc_streamer_pkg nodes (same container, separate process)
+and connects to the same SFU. It generates its own bundle from rov_config only
+(note the import: rov_config_gen, this package's own generated wrapper — see
+setup.py) and owns the two labels declared there:
 
   * "mission_status"  — 1 Hz heartbeat data stream (doubles as this
                         process's liveness signal in the GUI)
   * "configurator"    — rpc service: GetMission / UpdateMission
 
-The streamer never produces these labels (its codegen is restricted to
-rov/streams + rov/rpc), so the two processes split the label namespace
-cleanly.
+streams=[MissionStatusProducer] states that ownership explicitly. It is
+redundant here (this bundle holds nothing else) but it is the same declaration
+the streamer nodes use to split one bundle across three processes, and it keeps
+the label this process owns visible at the call site.
 """
 
 import os
@@ -25,6 +26,7 @@ from rov_config_gen import (
     GetMissionRequest,
     Mission,
     MissionStatus,
+    MissionStatusProducer,
     Proto4WebrtcProducer,
     UpdateMissionRequest,
 )
@@ -79,6 +81,7 @@ class WebRtcConfiguratorNode(Node):
         self.client = Proto4WebrtcProducer(
             signaling_url=signaling_url,
             token=token or None,
+            streams=[MissionStatusProducer],
             configurator=self.configurator,
             logger=self.get_logger(),
         )

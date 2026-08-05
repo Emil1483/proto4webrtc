@@ -3,7 +3,7 @@
 <package format="3">
   <name>webrtc_streamer_pkg</name>
   <version>0.0.1</version>
-  <description>Bridges ROS2 topics to the server over WebRTC (aiortc peer)</description>
+  <description>Bridges ROS2 topics to the server over WebRTC (aiortc peers): camera, telemetry and rpc nodes</description>
   <maintainer email="emil@djupvik.dev">user</maintainer>
   <license>Apache-2.0</license>
 

@@ -1,14 +1,16 @@
-// Configuration protos — a SECOND producer process on the robot.
+// Configuration protos — owned by a SEPARATE producer process on the robot.
 //
-// The telemetry streamer (webrtc_streamer_pkg) generates from rov/streams +
-// rov/rpc; the configurator (webrtc_configurator_pkg) generates from this
-// file only. Each process produces exactly the streams it owns, both connect
-// to the same SFU, and browsers see the union. Labels stay globally unique
-// across all processes.
+// Every producer process in the workspace is generated from the whole proto
+// tree once (rov_gen_pkg) and declares which labels it owns at runtime:
+// webrtc_configurator_node passes streams=[MissionStatusProducer] plus its
+// Configurator implementation, the streamer nodes pass theirs. So no label is
+// produced twice, every process connects to the same SFU, and browsers see the
+// union.
 //
-// Top-level package rov_config (not rov.config) on purpose: both ROS
-// packages' generated code lands on one sys.path, and two regular Python
-// packages both named `rov` would shadow each other.
+// Top-level package rov_config (not rov.config) purely for readability now
+// that one package generates both trees; with per-package codegen it was a
+// hard requirement (two regular Python packages named `rov` on one sys.path
+// shadow each other).
 
 syntax = "proto3";
 

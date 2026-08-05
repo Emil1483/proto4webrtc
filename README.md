@@ -330,26 +330,69 @@ stays clean automatically: each producer process consumes only the
 `client.rpc.getMission()` is answered by whichever container implements the
 `mission` service.
 
+### Splitting the streams between processes
+
+Processes sharing one generated bundle declare which labels they own with
+`streams=`:
+
+```python
+from proto4webrtc_gen import (
+    CameraStreamProducer,
+    Proto4WebrtcProducer,
+    ThrustersProducer,
+    PointCloudProducer,
+)
+
+# process A: telemetry only
+client = Proto4WebrtcProducer(signaling_url=..., streams=[ThrustersProducer, PointCloudProducer])
+
+# process B: video only — crashes here don't touch telemetry
+client = Proto4WebrtcProducer(signaling_url=..., streams=[CameraStreamProducer])
+
+# process C: rpc only, no stream at all
+client = Proto4WebrtcProducer(signaling_url=..., streams=[], control=Control())
+```
+
+`streams=` takes the generated producer classes or their wire labels
+(`streams=["telemetry", "pointcloud"]` — handy when the split comes from
+config, e.g. a ROS2 parameter). Omitting it produces every declared stream,
+which is what a single-process robot wants. A stream this process left out
+still has its attribute, but using it raises instead of silently going
+nowhere:
+
+```python
+client.camera_stream.push(frame)
+# RuntimeError: stream 'camera' is not produced by this client: pass
+# streams=[CameraStreamProducer] (or streams=['camera']) ...
+```
+
+Rpc services are opt-in the same way: only the implementations handed to the
+constructor have their `"<label>/requests"` channels consumed here.
+
 Two rules:
 
-- **Split the protos per process.** `Proto4WebrtcProducer` produces _every_
-  stream declared in the generated `producers.py`, so each process must be
-  generated from its own proto file (or file set) — telemetry streams in
-  one, configuration services in another. If two processes share generated
-  code, both produce the same labels and consumers receive every message
-  twice. One proto root can serve all processes: restrict each generation
-  with `--include` (CLI) / `include=` (`generate()`) globs, e.g.
-  `python -m proto4webrtc_codegen --proto protos --include 'rov/config/*.proto' --out out/`.
+- **Every label has exactly one owner.** Two processes producing the same
+  label means consumers receive every message twice — the SFU does not
+  dedupe. `streams=` is how you keep the ownership explicit and reviewable in
+  one place.
 - **Labels stay globally unique** across all processes connected to one SFU
   (the browser selects by label alone).
 
-When the producer processes' generated code can land on one `sys.path`
-(e.g. two ament*python packages in a colcon workspace), also keep the
-\_Python package names* disjoint: pass `gen_package=` to `generate()`
-(`--gen-package` on the CLI) so each process gets its own wrapper package
-instead of two colliding `proto4webrtc_gen`s, and give the proto packages
-distinct top-level names (`rov` and `rov_config`, not `rov.streams` and
-`rov.config`) — same-named regular Python packages shadow each other.
+How far to take one bundle is a build-layout question, separate from label
+ownership:
+
+- Processes built from the **same** code (several nodes in one ROS2 package,
+  several entry points in one image) share one bundle and split it with
+  `streams=`. No extra codegen, no proto shuffling to add a process.
+- Processes built from **different** code generate their own bundle, each from
+  only the protos it needs: `include=` (`--include`) globs narrow what is
+  compiled, so no package carries generated code it never imports. When two
+  such bundles can land on one `sys.path`, give each its own wrapper package
+  name with `gen_package=` (`--gen-package`) — same-named regular Python
+  packages shadow each other — and keep the proto packages' top-level names
+  distinct too (`rov` and `rov_config`, not `rov.streams` and `rov.config`).
+
+`include=` never changes what a client produces; only `streams=` does.
 
 Consumer-side liveness is per label, not per process:
 `client.onProducerClosed((label) => ...)` reports which stream went away,
@@ -358,9 +401,10 @@ can tell "telemetry container dropped" from "configurator dropped" by the
 labels each one owns. `robotOnline` is coarser — true while _any_ producer
 is online.
 
-The full setup — two ROS2 producer packages in one container
-(`webrtc_streamer_pkg` + `webrtc_configurator_pkg`), and a GUI homescreen
-showing per-process liveness — lives in [`example/`](example/README.md).
+The full setup — four producer processes in one container (three nodes sharing
+`webrtc_streamer_pkg`'s bundle, one in `webrtc_configurator_pkg` with its own),
+and a GUI homescreen showing per-process liveness — lives in
+[`example/`](example/README.md).
 
 One caveat for rpcs like `restartContainers()` that restart the very
 process serving them: schedule the restart (e.g. `asyncio.get_event_loop()
@@ -378,9 +422,9 @@ _how_ the pip dependency reaches the interpreter colcon builds against.
 Run `generate()` at `setup.py` time, so `colcon build` is the whole workflow:
 no separate generate step to forget, no `PYTHONPATH` to export, and no way to
 build against a stale encoder. Generate straight into the package's own
-directory — the generated top-level packages (e.g. `rov`, `proto4webrtc`,
-`proto4webrtc_gen`) land beside `my_streamer/` and are picked up by the
-ordinary `find_packages()` call below, no `package_dir` grafting needed:
+directory — the generated top-level packages (e.g. `rov`, `proto4webrtc_gen`)
+land beside `my_streamer/` and are picked up by the ordinary `find_packages()`
+call below, no `package_dir` grafting needed:
 
 ```python
 # src/my_streamer/setup.py
@@ -398,15 +442,14 @@ package_name = 'my_streamer'
 # The generated top-level packages land next to my_streamer/ and are picked
 # up by find_packages() below.
 #
-# include: this process owns only the telemetry streams — see "Multiple robot
-# producers" above. Pass gen_package= too when a second ament_python package in
-# the same workspace also generates, so the two wrapper packages don't shadow
-# each other on the shared sys.path.
+# include: only the protos this package's nodes import. Pass gen_package= too
+# when a second ament_python package in the same workspace also generates, so
+# the two wrapper packages don't shadow each other on the shared sys.path.
 _here = Path(__file__).resolve().parent
 generate(
     proto_dirs=[_here.parents[2] / 'proto'],
     out_dir=_here,
-    include=['telemetry/*.proto'],
+    include=['telemetry/*.proto', 'camera/*.proto'],
 )
 
 setup(
@@ -421,15 +464,35 @@ setup(
     zip_safe=True,
     maintainer='user',
     maintainer_email='you@example.com',
-    description='Bridges ROS2 topics to the server over WebRTC (aiortc peer)',
+    description='Bridges ROS2 topics to the server over WebRTC (aiortc peers)',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'telemetry_streamer = my_streamer.telemetry_streamer:main',
+            'telemetry_node = my_streamer.telemetry_node:main',
+            'camera_node = my_streamer.camera_node:main',
         ],
     },
 )
 ```
+
+One package, several nodes, one bundle: the entry points above are separate
+_processes_, and each names the labels it owns:
+
+```python
+# src/my_streamer/my_streamer/telemetry_node.py
+client = Proto4WebrtcProducer(signaling_url=url, streams=[ThrustersProducer])
+
+# src/my_streamer/my_streamer/camera_node.py — separate process, same package
+client = Proto4WebrtcProducer(signaling_url=url, streams=[CameraStreamProducer])
+```
+
+That is the point of the split: the camera process can die (encoder, driver,
+OOM) and telemetry keeps publishing, with the browser marking only `camera`
+offline. Before `streams=`, one process per label set meant one _package_ per
+process — its own `generate()` call, its own `gen_package` name, its own
+`include=` subset. A package still generates its own bundle when its nodes need
+_different protos_ (that is what `include=` and `gen_package=` are for); it no
+longer has to just to own a different label.
 
 A CMake (`ament_cmake`) package does the same with `execute_process` at
 _configure_ time plus `CMAKE_CONFIGURE_DEPENDS` on `*.proto`, so editing a

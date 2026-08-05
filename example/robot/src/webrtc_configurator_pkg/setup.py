@@ -6,14 +6,18 @@ from proto4webrtc_codegen import generate
 
 package_name = 'webrtc_configurator_pkg'
 
-# Second producer process in the same workspace/container as
-# webrtc_streamer_pkg. Two things keep the packages from colliding on the
-# shared sys.path colcon builds:
-#   * include: this process generates (and therefore produces) ONLY the
-#     rov_config streams — the streamer owns rov/streams + rov/rpc.
-#   * gen_package: the wrapper package gets its own name; two regular
-#     packages both named proto4webrtc_gen would shadow each other. Same
-#     reason the proto package is rov_config, not rov.config.
+# This package generates its own bundle, from only the protos its node needs:
+#   * include: rov_config alone -- rov/streams + rov/rpc belong to
+#     webrtc_streamer_pkg. A package pulling in protos it doesn't use would
+#     just be extra generated code to build and rebuild.
+#   * gen_package: the wrapper package gets its own name; two regular packages
+#     both named proto4webrtc_gen would shadow each other on the sys.path
+#     colcon shares across the workspace. Same reason the proto package is
+#     rov_config, not rov.config.
+#
+# Splitting labels between PROCESSES needs neither of these -- that is
+# Proto4WebrtcProducer(streams=[...]), see webrtc_streamer_pkg's three nodes.
+# Here the split is per package because the protos differ too.
 _here = Path(__file__).resolve().parent
 generate(
     proto_dirs=[_here.parents[2] / 'proto'],

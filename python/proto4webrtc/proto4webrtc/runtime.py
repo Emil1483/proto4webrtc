@@ -180,6 +180,63 @@ class MediaProducerBase:
         self._track.push(frame)
 
 
+class UnselectedStream:
+    """Stands in for a stream this client was not asked to produce.
+
+    The generated aggregate client keeps one attribute per declared stream so
+    the bundle can be shared by several processes (see select_streams); the
+    ones left out of ``streams=`` get this instead of a live producer, so
+    touching them fails loudly rather than silently going nowhere.
+    """
+
+    def __init__(self, label: str, attr: str, class_name: str):
+        self.LABEL = label
+        self._attr = attr
+        self._class_name = class_name
+
+    def _fail(self):
+        raise RuntimeError(
+            f"stream {self.LABEL!r} is not produced by this client: pass "
+            f"streams=[{self._class_name}] (or streams=[{self.LABEL!r}]) to "
+            f"Proto4WebrtcProducer to let this process own it, or use the "
+            f"client that does. Attribute: .{self._attr}"
+        )
+
+    def send(self, msg):
+        self._fail()
+
+    def push(self, frame):
+        self._fail()
+
+
+def select_streams(selectors, registry) -> set[str]:
+    """Resolve a ``streams=`` selection to the set of attribute names to produce.
+
+    registry: the generated client's ``_STREAMS`` — a sequence of
+        ``(attr, label, producer_class)`` for every declared stream.
+    selectors: None produces every declared stream (one process owning the
+        whole bundle). Otherwise an iterable of producer classes (e.g.
+        ``ThrustersProducer``) or wire labels (``"telemetry"``), so several
+        processes can share one generated bundle and split the labels between
+        them. An empty iterable selects nothing (e.g. an rpc-only process).
+    """
+    by_class = {cls: attr for attr, _, cls in registry}
+    by_label = {label: attr for attr, label, _ in registry}
+    if selectors is None:
+        return set(by_class.values())
+
+    selected: set[str] = set()
+    for sel in selectors:
+        attr = by_class.get(sel) if isinstance(sel, type) else by_label.get(sel)
+        if attr is None:
+            known = ", ".join(sorted(by_label))
+            raise ValueError(
+                f"unknown stream {sel!r} in streams=; declared labels: {known}"
+            )
+        selected.add(attr)
+    return selected
+
+
 class RpcServiceBase:
     """Base for generated RPC service classes; the robot subclasses those.
 
@@ -469,7 +526,11 @@ class Proto4WebrtcClient:
                     recv_transport, rpc_event_handler = await self._serve_rpc(
                         device
                     )
-                self._logger.info("producing")
+                produced = [
+                    p.LABEL
+                    for p in (*self._data_producers, *self._media_producers)
+                ] + [f"{s.LABEL}/rpc" for s in self._rpc_services]
+                self._logger.info(f"producing: {', '.join(produced) or '(nothing)'}")
 
                 await reader_task  # returns when the socket closes
             finally:

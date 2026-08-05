@@ -23,7 +23,21 @@ def generate_launch_description():
             ),
             Node(
                 package="webrtc_streamer_pkg",
-                executable="webrtc_streamer_node",
+                executable="camera_node",
+                parameters=[{"signaling_url": signaling_url}],
+                respawn=True,
+                respawn_delay=2.0,
+            ),
+            Node(
+                package="webrtc_streamer_pkg",
+                executable="telemetry_node",
+                parameters=[{"signaling_url": signaling_url}],
+                respawn=True,
+                respawn_delay=2.0,
+            ),
+            Node(
+                package="webrtc_streamer_pkg",
+                executable="rpc_node",
                 parameters=[{"signaling_url": signaling_url}],
                 respawn=True,
                 respawn_delay=2.0,

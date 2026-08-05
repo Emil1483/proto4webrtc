@@ -54,12 +54,13 @@ def generate(proto_dirs, out_dir, include=None, gen_package=GEN_PACKAGE) -> list
     proto_dirs: one dir or a list of dirs; each is a protoc include root.
     include: optional list of glob patterns (relative to the roots, e.g.
         "rov/streams/*.proto"); when given, only matching files are compiled.
-        The producer runtime produces *every* stream in the generated code,
-        so a process that should own only a subset of the streams (several
-        producer processes behind one SFU) must generate from that subset.
-        Non-matching files remain importable via the include path.
+        Non-matching files remain importable via the include path. Narrow this
+        to the protos the generating package actually imports, so it carries
+        no generated code it never uses. It does NOT decide what a process
+        produces: several processes built from one bundle split the labels
+        with Proto4WebrtcProducer(streams=[...]).
     gen_package: name of the generated wrapper package (default
-        "proto4webrtc_gen"). Give each producer package its own name when
+        "proto4webrtc_gen"). Give each generating package its own name when
         several of them can land on one sys.path (e.g. two ament_python
         packages in one colcon workspace) — same-named regular packages
         shadow each other.

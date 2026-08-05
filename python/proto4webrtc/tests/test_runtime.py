@@ -16,6 +16,8 @@ from proto4webrtc.runtime import (
     FrameTrack,
     MediaProducerBase,
     Proto4WebrtcClient,
+    UnselectedStream,
+    select_streams,
 )
 
 
@@ -335,3 +337,50 @@ def test_reader_events_reach_handlers():
     assert seen == [
         {"event": "newDataProducer", "label": "svc/requests", "dataProducerId": "d1"}
     ]
+
+
+# --- stream selection (several producer processes, one generated bundle) ----
+
+class FakeProducerA:
+    LABEL = "telemetry"
+
+
+class FakeProducerB:
+    LABEL = "camera"
+
+
+REGISTRY = (
+    ("thrusters", "telemetry", FakeProducerA),
+    ("camera_stream", "camera", FakeProducerB),
+)
+
+
+def test_select_streams_none_selects_everything():
+    assert select_streams(None, REGISTRY) == {"thrusters", "camera_stream"}
+
+
+def test_select_streams_by_producer_class():
+    assert select_streams([FakeProducerA], REGISTRY) == {"thrusters"}
+
+
+def test_select_streams_by_label():
+    """Labels let the split come from config (e.g. a ROS2 parameter)."""
+    assert select_streams(["camera"], REGISTRY) == {"camera_stream"}
+
+
+def test_select_streams_empty_selects_nothing():
+    """An rpc-only process owns no data/media label."""
+    assert select_streams([], REGISTRY) == set()
+
+
+def test_select_streams_rejects_unknown_selectors():
+    with pytest.raises(ValueError, match="unknown stream"):
+        select_streams(["telemetri"], REGISTRY)
+
+
+def test_unselected_stream_fails_loudly_instead_of_dropping():
+    stream = UnselectedStream("camera", "camera_stream", "CameraStreamProducer")
+    with pytest.raises(RuntimeError, match="not produced by this client"):
+        stream.push(object())
+    with pytest.raises(RuntimeError, match="streams=\\[CameraStreamProducer\\]"):
+        stream.send(FakeMessage())

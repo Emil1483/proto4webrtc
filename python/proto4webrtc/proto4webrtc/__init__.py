@@ -6,6 +6,8 @@ from proto4webrtc.runtime import (
     MediaProducerBase,
     Proto4WebrtcClient,
     RpcServiceBase,
+    UnselectedStream,
+    select_streams,
 )
 
 __all__ = [
@@ -14,4 +16,6 @@ __all__ = [
     "MediaProducerBase",
     "Proto4WebrtcClient",
     "RpcServiceBase",
+    "UnselectedStream",
+    "select_streams",
 ]

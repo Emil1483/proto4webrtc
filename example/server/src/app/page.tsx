@@ -2,7 +2,7 @@
 
 // Homescreen: one card per stream label and rpc service, grouped by the
 // robot process that owns it. Liveness is per label (StreamState.online /
-// onlineLabels), so the two producer processes show up independently — kill
+// onlineLabels), so the four producer processes show up independently — kill
 // one node on the robot and only its group goes red. Subscribes to NOTHING:
 // presence comes from the SFU's producer registry, no stream data reaches
 // this page.
@@ -27,16 +27,29 @@ interface Entry {
   description: string;
 }
 
-// Owned by webrtc_streamer_pkg (generated from rov/streams + rov/rpc).
+// One group per robot process. The first three are nodes in one ament package
+// (webrtc_streamer_pkg) sharing one generated bundle, each owning its labels via
+// Proto4WebrtcProducer(streams=[...]) -- a runtime split, not a codegen one. The
+// configurator is its own package with its own bundle (different protos).
+
+// webrtc_streamer_pkg/telemetry_node.
 const TELEMETRY_PROCESS: Entry[] = [
   { label: "telemetry", kind: "data", href: "/telemetry", description: "Thruster values, 100 Hz, unreliable" },
-  { label: "camera", kind: "media", href: "/camera", description: "VP8 video over RTP" },
   { label: "pointcloud", kind: "data", href: "/pointcloud", description: "Packed float32 clouds, newest wins" },
+];
+
+// webrtc_streamer_pkg/camera_node.
+const CAMERA_PROCESS: Entry[] = [
+  { label: "camera", kind: "media", href: "/camera", description: "VP8 video over RTP" },
+];
+
+// webrtc_streamer_pkg/rpc_node -- rpc only, produces no stream.
+const RPC_PROCESS: Entry[] = [
   { label: "rov_control", kind: "rpc", href: "/control", description: "RovControl: Ping, SetLight" },
   { label: "greeter", kind: "rpc", href: "/greeter", description: "Greeter: Greet, relayed to the ROS2 service /greet" },
 ];
 
-// Owned by webrtc_configurator_pkg (generated from rov_config).
+// webrtc_configurator_pkg/webrtc_configurator_node.
 const CONFIG_PROCESS: Entry[] = [
   { label: "mission_status", kind: "data", href: "/mission", description: "1 Hz heartbeat with the current mission" },
   { label: "configurator", kind: "rpc", href: "/configurator", description: "Configurator: GetMission, UpdateMission" },
@@ -96,8 +109,10 @@ export default function Home() {
         : "warning";
 
   const groups: { title: string; entries: Entry[] }[] = [
-    { title: "Streamer (webrtc_streamer_pkg)", entries: TELEMETRY_PROCESS },
-    { title: "Configurator (webrtc_configurator_pkg)", entries: CONFIG_PROCESS },
+    { title: "telemetry_node (webrtc_streamer_pkg)", entries: TELEMETRY_PROCESS },
+    { title: "camera_node (webrtc_streamer_pkg)", entries: CAMERA_PROCESS },
+    { title: "rpc_node (webrtc_streamer_pkg)", entries: RPC_PROCESS },
+    { title: "configurator_node (webrtc_configurator_pkg)", entries: CONFIG_PROCESS },
   ];
 
   return (

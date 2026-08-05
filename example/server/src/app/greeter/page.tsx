@@ -1,7 +1,7 @@
 "use client";
 
 // Greeter rpc console. The interesting part is where the call is answered: the
-// streamer node produces the "greeter" channels, but its handler only forwards
+// rpc_node produces the "greeter" channels, but its handler only forwards
 // the call to the ROS2 service /greet, which publisher_pkg's
 // greet_service_node serves. Both ends of that hop are generated from the same
 // proto/rov/rpc/greeter.proto -- the WebRTC rpc by proto4webrtc_codegen, the
@@ -73,7 +73,7 @@ export default function GreeterPage() {
             Greet (rpc, relayed to a ROS2 service)
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            browser → streamer node → ROS2 service <code>/greet</code> →
+            browser → rpc_node → ROS2 service <code>/greet</code> →
             greet_service_node
           </Typography>
           <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>

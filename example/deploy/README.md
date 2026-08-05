@@ -46,5 +46,6 @@ Both clients speak mediasoup over `/api/sfu` (the old werift `/api/signaling`
 route is gone):
 - **Browser** — `mediasoup-client` (`Device.load`, recv transport, consumes
   only the producers each screen needs).
-- **Robot** — `pymediasoup` + aiortc producer (`webrtc_streamer_node`); use
+- **Robot** — `pymediasoup` + aiortc producers (`camera_node`,
+  `telemetry_node`, `rpc_node`, `webrtc_configurator_node`); use
   `webrtc_prod.launch.py` to point it at this deployment.

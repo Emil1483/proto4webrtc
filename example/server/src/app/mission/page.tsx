@@ -2,7 +2,7 @@
 
 // mission_status viewer — the configurator process's 1 Hz heartbeat.
 // Because it comes from a different process than telemetry/camera, this page
-// stays live when the streamer node is down (and vice versa).
+// stays live when the other producer nodes are down (and vice versa).
 
 import NextLink from "next/link";
 import Box from "@mui/material/Box";

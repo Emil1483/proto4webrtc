@@ -21,8 +21,8 @@ def main():
         "--include",
         action="append",
         help="glob relative to the roots (repeatable, e.g. rov/streams/*.proto); "
-        "compile only matching files — for producer processes that own a "
-        "subset of the streams",
+        "compile only the protos this package imports. Which streams a process "
+        "produces is Proto4WebrtcProducer(streams=[...]), not this",
     )
     parser.add_argument(
         "--gen-package",

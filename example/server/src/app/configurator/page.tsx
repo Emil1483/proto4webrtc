@@ -1,7 +1,7 @@
 "use client";
 
 // Configurator rpc console — served by webrtc_configurator_node, NOT the
-// streamer node. GetMission on load, UpdateMission from the form; a
+// rpc_node. GetMission on load, UpdateMission from the form; a
 // successful update shows up on the /mission heartbeat within a second.
 
 import { useEffect, useState } from "react";

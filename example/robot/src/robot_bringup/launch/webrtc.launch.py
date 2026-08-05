@@ -13,13 +13,32 @@ def generate_launch_description():
                 default_value="ws://localhost:3000/api/sfu",
                 description="WebRTC signaling WebSocket URL on the server",
             ),
-            # Two producer processes, one SFU: the streamer owns telemetry/
-            # camera/pointcloud + RovControl, the configurator owns
-            # mission_status + Configurator. Kill one and only its labels go
-            # offline in the GUI.
+            # Four producer processes, one SFU. The three streamer nodes share
+            # webrtc_streamer_pkg's bundle and each picks the labels it owns
+            # with Proto4WebrtcProducer(streams=[...]); the configurator
+            # generates its own from rov_config.
+            #   camera_node       -> "camera"
+            #   telemetry_node    -> "telemetry", "pointcloud"
+            #   rpc_node          -> RovControl + Greeter rpc, no stream
+            #   configurator_node -> "mission_status" + Configurator rpc
+            # Kill one and only its labels go offline in the GUI.
             Node(
                 package="webrtc_streamer_pkg",
-                executable="webrtc_streamer_node",
+                executable="camera_node",
+                parameters=[{"signaling_url": signaling_url}],
+                respawn=True,
+                respawn_delay=2.0,
+            ),
+            Node(
+                package="webrtc_streamer_pkg",
+                executable="telemetry_node",
+                parameters=[{"signaling_url": signaling_url}],
+                respawn=True,
+                respawn_delay=2.0,
+            ),
+            Node(
+                package="webrtc_streamer_pkg",
+                executable="rpc_node",
                 parameters=[{"signaling_url": signaling_url}],
                 respawn=True,
                 respawn_delay=2.0,

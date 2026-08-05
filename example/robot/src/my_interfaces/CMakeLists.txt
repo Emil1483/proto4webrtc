@@ -6,7 +6,7 @@
 # build against a stale interface. Only this file and package.xml are committed;
 # msg/ and srv/ are generated (and gitignored).
 #
-# The same protofiles drive the WebRTC side (webrtc_streamer_pkg's setup.py) and
+# The same protofiles drive the WebRTC side (each producer package's setup.py) and
 # the browser, so a field added in /proto reaches ROS2, the robot's producer code
 # and the GUI from one edit.
 cmake_minimum_required(VERSION 3.8)

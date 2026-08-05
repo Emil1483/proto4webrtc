@@ -40,7 +40,7 @@ def generate_launch_description():
             #     respawn_delay=2.0,
             # ),
             # The far end of the relayed Greeter rpc: a plain ROS2 service
-            # server on /greet. The streamer node forwards the browser's call
+            # server on /greet. rpc_node forwards the browser's call
             # to it, so this node has to be up for /greeter to answer.
             Node(
                 package="publisher_pkg",

@@ -5,7 +5,7 @@
   <version>0.0.1</version>
   <description>
     greeter_node publishes Greeting on /greetings; greet_service_node serves
-    /greet, which the streamer node relays browser Greeter rpcs to.
+    /greet, which webrtc_streamer_pkg's rpc_node relays browser Greeter rpcs to.
   </description>
   <maintainer email="emil@djupvik.dev">user</maintainer>
   <license>Apache-2.0</license>
