@@ -148,6 +148,18 @@ async def test_media_producer_attach_wires_track_with_label():
     assert mp._producer is None
 
 
+def test_frame_track_survives_stop():
+    # aiortc's RTCRtpSender.stop()s its track on every pc.close(); an ended
+    # track can never be produced again, so the camera would never come back
+    # after a reconnect.
+    track = FrameTrack(kind="video")
+    track.stop()
+    assert track.readyState == "live"
+    frame = object()
+    track.push(frame)
+    assert track._queue.get_nowait() is frame
+
+
 def test_frame_track_push_is_drop_oldest():
     track = FrameTrack(kind="video")
     frame_a, frame_b = object(), object()

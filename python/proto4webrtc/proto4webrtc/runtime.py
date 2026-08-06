@@ -83,6 +83,15 @@ class FrameTrack(MediaStreamTrack):
                 pass
         self._queue.put_nowait(frame)
 
+    def stop(self) -> None:
+        # aiortc's RTCRtpSender stops its track when the RTP task exits (i.e.
+        # on every pc.close()), ignoring mediasoup's stopTracks=False. An
+        # ended track can never be produced again -- transport.produce()
+        # raises InvalidStateError("track ended") -- so a robot would come
+        # back on its data streams but never on its camera. This track
+        # outlives connections: refuse to be ended.
+        pass
+
     async def recv(self):
         frame = await self._queue.get()
         if self._start is None:
