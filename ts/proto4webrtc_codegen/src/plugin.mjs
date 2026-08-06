@@ -518,10 +518,18 @@ function renderReact(dataStreams) {
 // Subscribe by passing an options object (even {}) for a label; labels you
 // don't pass stay at hz 0 with latest undefined. States update inside one
 // requestAnimationFrame loop, decoupled from message arrival rate.
+//
+// A lost session (signaling socket closed, ICE/DTLS failed — what a mobile
+// browser does after a while in the background) reconnects on its own: forever,
+// one second apart, and immediately when the tab becomes visible again. Tune it
+// with the reconnect fields of clientOptions (shouldReconnect,
+// reconnectInterval, reconnectAttempts, onReconnectStop). Failed attempts go
+// to clientOptions.onConnectError — wire it to toast or ignore them; without
+// it they only reach the console as warnings.
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   connectToSfu,
@@ -567,6 +575,15 @@ ${resultBlocks}
    * derived from this set.
    */
   onlineLabels: ReadonlySet<string>;
+  /** True between losing a session and having a live client again. */
+  reconnecting: boolean;
+  /** Attempts made since the last successful connect; 0 while connected. */
+  reconnectAttempt: number;
+  /**
+   * Drop the current session (if any) and connect again now, resetting the
+   * backoff. Also the way back after onReconnectStop.
+   */
+  reconnect: () => void;
 }
 
 type StreamLabel = ${labelUnion};
@@ -584,8 +601,33 @@ type Buffers = Record<StreamLabel, { latest: unknown; times: number[] }>;
 type MessageStates = Record<StreamLabel, { hz: number; latest: unknown }>;
 type StreamStates = Omit<
   UseSfuResult,
-  "client" | "connectionState" | "robotOnline" | "onlineLabels"
+  | "client"
+  | "connectionState"
+  | "robotOnline"
+  | "onlineLabels"
+  | "reconnecting"
+  | "reconnectAttempt"
+  | "reconnect"
 >;
+
+const DEFAULT_RECONNECT_INTERVAL_MS = 1000;
+
+/** ms to wait before attempt \`attempt\` (1-based). */
+function retryDelayMs(
+  interval: Proto4WebrtcClientOptions["reconnectInterval"],
+  attempt: number,
+): number {
+  if (typeof interval === "function") return interval(attempt);
+  if (typeof interval === "number") return interval;
+  return DEFAULT_RECONNECT_INTERVAL_MS;
+}
+
+/** A CloseEvent for a loss with no socket close behind it (e.g. connect failed). */
+function closeEventLike(code: number, reason: string): WebSocketEventMap["close"] {
+  if (typeof CloseEvent === "function")
+    return new CloseEvent("close", { code, reason, wasClean: false });
+  return { type: "close", code, reason, wasClean: false } as CloseEvent;
+}
 
 export function useSfu(
   streams: UseSfuStreams = {},
@@ -601,33 +643,125 @@ export function useSfu(
   const streamsRef = useRef(streams);
   streamsRef.current = streams;
 
-  // Connect once per mount; clientOptions changes after mount are ignored.
+  // Options are read through refs: changing them after mount must not tear
+  // down a live session (a fresh object every render otherwise would).
   const clientOptionsRef = useRef(clientOptions);
   clientOptionsRef.current = clientOptions;
+
+  // Connect, and reconnect whenever the session is lost. \`generation\` is what
+  // re-runs the effect: the loss handler bumps it, the effect waits out the
+  // backoff for the current attempt number, then connects.
+  const [generation, setGeneration] = useState(0);
+  const attemptRef = useRef(0);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [reconnecting, setReconnecting] = useState(false);
+  // Set when the policy said stop; only reconnect() clears it, so a visibility
+  // change doesn't quietly override the caller's decision.
+  const gaveUpRef = useRef(false);
+
+  const reconnect = useCallback(() => {
+    attemptRef.current = 0;
+    setReconnectAttempt(0);
+    gaveUpRef.current = false;
+    setReconnecting(true);
+    setGeneration((g) => g + 1);
+  }, []);
+
   useEffect(() => {
-    let closed = false;
+    let done = false;
     let connected: StreamsClient | null = null;
     const options = clientOptionsRef.current;
-    connectToSfu({
-      ...options,
-      onConnectionState: (s) => {
-        if (!closed) setConnectionState(s);
-        options?.onConnectionState?.(s);
-      },
-    })
-      .then((c) => {
-        if (closed) c.close();
-        else {
-          connected = c;
-          setClient(c);
-        }
+
+    // One session loss — from the socket, the transport, or a failed connect.
+    const onLost = (event: WebSocketEventMap["close"]) => {
+      if (done) return;
+      done = true;
+      connected?.close();
+      connected = null;
+      setClient(null);
+      const policy = clientOptionsRef.current ?? {};
+      const max = policy.reconnectAttempts ?? -1;
+      const attemptsSoFar = attemptRef.current;
+      const allowed =
+        (policy.shouldReconnect?.(event) ?? true) &&
+        (max < 0 || attemptsSoFar < max);
+      if (!allowed) {
+        gaveUpRef.current = true;
+        setReconnecting(false);
+        policy.onReconnectStop?.(attemptsSoFar);
+        return;
+      }
+      attemptRef.current = attemptsSoFar + 1;
+      setReconnectAttempt(attemptRef.current);
+      setReconnecting(true);
+      setGeneration((g) => g + 1);
+    };
+
+    // First connect of a generation chain is immediate; retries wait.
+    const delay =
+      attemptRef.current === 0
+        ? 0
+        : retryDelayMs(options?.reconnectInterval, attemptRef.current);
+    const timer = setTimeout(() => {
+      connectToSfu({
+        ...options,
+        onConnectionState: (s) => {
+          if (!done) setConnectionState(s);
+          options?.onConnectionState?.(s);
+        },
       })
-      .catch((err) => console.error("[useSfu] connect failed:", err));
+        .then((c) => {
+          if (done) {
+            c.close();
+            return;
+          }
+          connected = c;
+          attemptRef.current = 0;
+          setReconnectAttempt(0);
+          setReconnecting(false);
+          c.onClosed(onLost);
+          setClient(c);
+        })
+        .catch((err) => {
+          const e = err instanceof Error ? err : new Error(String(err));
+          // The app owns how a down SFU is shown; only fall back to the
+          // console when it wired no handler. Warn, not error, so a dev
+          // server restart doesn't raise Next's error overlay on every retry.
+          const policy = clientOptionsRef.current;
+          if (policy?.onConnectError)
+            policy.onConnectError(e, attemptRef.current + 1);
+          else console.warn("[useSfu] connect failed:", e.message);
+          onLost(closeEventLike(4000, e.message));
+        });
+    }, delay);
+
     return () => {
-      closed = true;
+      done = true;
+      clearTimeout(timer);
       connected?.close();
     };
-  }, []);
+  }, [generation]);
+
+  // Coming back from the background is the case that used to need a page
+  // refresh: the socket and ICE may be dead while nothing has reported it yet.
+  // Probe on resume, and don't sit out a backoff we no longer need.
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      if (gaveUpRef.current) return;
+      if (!client) {
+        if (attemptRef.current > 0) reconnect(); // skip the remaining backoff
+        return;
+      }
+      client.ping().catch(() => reconnect());
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("online", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("online", check);
+    };
+  }, [client, reconnect]);
 
   // Producer presence: robotOnline = any producer registered at the SFU;
   // onlineLabels = the set of labels currently produced (media labels ride
@@ -747,7 +881,16 @@ export function useSfu(
   const streamStates = Object.fromEntries(
     LABELS.map((l) => [l, { ...state[l], online: onlineLabels.has(l) }]),
   ) as unknown as StreamStates;
-  return { ...streamStates, client, connectionState, robotOnline, onlineLabels };
+  return {
+    ...streamStates,
+    client,
+    connectionState,
+    robotOnline,
+    onlineLabels,
+    reconnecting,
+    reconnectAttempt,
+    reconnect,
+  };
 }
 `;
 }

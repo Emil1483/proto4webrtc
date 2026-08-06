@@ -14,6 +14,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastConnectError } from "@/lib/toast";
 
 const THRUSTER_COLORS = ["#42a5f5", "#66bb6a", "#ffa726", "#ef5350"];
 
@@ -64,9 +65,14 @@ function ThrusterBar({ index, value }: { index: number; value: number }) {
 }
 
 export default function TelemetryPage() {
-  const { telemetry, connectionState } = useSfu({
-    telemetry: { forceInOrder: true },
-  });
+  // No reconnect policy passed: the defaults (retry forever, 1s apart,
+  // reconnect on tab resume) are what a viewer page wants. onConnectError
+  // decides how a down SFU is shown — a toast here, so a server restart
+  // doesn't just log to the console.
+  const { telemetry, connectionState, reconnecting, reconnectAttempt } = useSfu(
+    { telemetry: { forceInOrder: true } },
+    { onConnectError: toastConnectError },
+  );
   const msg = telemetry.latest;
   const values = msg
     ? [msg.value0, msg.value1, msg.value2, msg.value3]
@@ -87,6 +93,13 @@ export default function TelemetryPage() {
               size="small"
             />
             <Chip label={`WebRTC: ${connectionState}`} size="small" />
+            {reconnecting && (
+              <Chip
+                label={`reconnecting (${reconnectAttempt})`}
+                color="warning"
+                size="small"
+              />
+            )}
           </Stack>
         </Box>
 

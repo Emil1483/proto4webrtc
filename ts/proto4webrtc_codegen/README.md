@@ -38,6 +38,11 @@ import { useSfu } from "./gen/proto4webrtc_react";
 const { telemetry } = useSfu({ telemetry: { forceInOrder: true } });
 ```
 
+The hook reconnects on its own when the session dies (socket closed, ICE/DTLS
+failed, phone back from the background), retrying forever one second apart;
+`reconnectAttempts`, `reconnectInterval`, `shouldReconnect` and
+`onReconnectStop` on the client options change that.
+
 Data streams also get `TelemetryStream.subscribe(sfu, onMessage)` — a typed
 wrapper for server-side, in-process access (no browser, no WebRTC) over a
 [`Proto4WebrtcSfu`](proto4webrtc/README.md) (npm package `proto4webrtc`,

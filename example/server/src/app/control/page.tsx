@@ -16,14 +16,14 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
-import { toastError, toastSfuError } from "@/lib/toast";
+import { toastConnectError, toastError, toastSfuError } from "@/lib/toast";
 
 export default function ControlPage() {
   const [light, setLight] = useState(0);
   const [pingMs, setPingMs] = useState<number | null>(null);
   const { client, connectionState, onlineLabels } = useSfu(
     {},
-    { onError: toastSfuError },
+    { onError: toastSfuError, onConnectError: toastConnectError },
   );
   // The service is being served while the robot produces its responses channel.
   const online = onlineLabels.has("rov_control/responses");

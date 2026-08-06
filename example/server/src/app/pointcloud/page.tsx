@@ -19,7 +19,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
-import { toastSfuError } from "@/lib/toast";
+import { toastConnectError, toastSfuError } from "@/lib/toast";
 
 export default function PointcloudPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,7 +33,7 @@ export default function PointcloudPage() {
   // rejected and onError toasts it.
   const { pointcloud, connectionState, robotOnline } = useSfu(
     { pointcloud: { forceInOrder: true } },
-    { onError: toastSfuError },
+    { onError: toastSfuError, onConnectError: toastConnectError },
   );
   const state = connectionState;
   const hz = pointcloud.hz;

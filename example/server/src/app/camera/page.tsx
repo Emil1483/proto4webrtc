@@ -14,7 +14,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
-import { toastSfuError } from "@/lib/toast";
+import { toastConnectError, toastSfuError } from "@/lib/toast";
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -22,7 +22,7 @@ export default function CameraPage() {
   // consume and onError toasts it (no exception is thrown to catch here).
   const { client, connectionState, onlineLabels } = useSfu(
     {},
-    { onError: toastSfuError },
+    { onError: toastSfuError, onConnectError: toastConnectError },
   );
   const online = onlineLabels.has("camera");
 

@@ -47,6 +47,42 @@ export interface Proto4WebrtcClientOptions {
    * streams) or `info.kind` (media) identifies what failed.
    */
   onError?: (err: Error, info: { label?: string; kind?: string }) => void;
+
+  // --- reconnect policy ----------------------------------------------------
+  // Read by the generated React hook (useSfu), which owns the reconnect loop.
+  // connectToSfu() itself connects once; a plain client reconnects by watching
+  // onClosed() and calling connectToSfu() again. Defaults: retry forever, one
+  // second apart.
+  /**
+   * Decide per loss whether to retry, from the socket's CloseEvent. Losses
+   * detected on the transport rather than the socket carry a synthetic event
+   * with a private code (4000 connect failed, 4001 transport failed, 4002
+   * transport closed). Default: always retry.
+   */
+  shouldReconnect?: (event: WebSocketEventMap["close"]) => boolean;
+  /**
+   * Delay before the next attempt: a fixed number of ms, or a function of the
+   * attempt number (1 for the first retry after a loss — the count resets on
+   * every successful connect). Default: 1000.
+   */
+  reconnectInterval?: number | ((lastAttemptNumber: number) => number);
+  /** Attempts before giving up; -1 (the default) never gives up. 0 disables reconnect. */
+  reconnectAttempts?: number;
+  /**
+   * Called once when retrying stops — attempts exhausted, or shouldReconnect
+   * returned false — with the number of attempts made. Nothing reconnects
+   * after this except an explicit reconnect() call.
+   */
+  onReconnectStop?: (numAttempts: number) => void;
+  /**
+   * Called for every failed connect attempt (`attempt` is 1 for the first),
+   * so the app decides how a down SFU is surfaced — a toast, a banner, or
+   * nothing at all while the retry loop keeps going. Wire it and the library
+   * logs nothing; leave it out and failures fall back to a console warning.
+   * A server restart makes this fire once per retry, so keep it quiet or
+   * report only the first one.
+   */
+  onConnectError?: (err: Error, attempt: number) => void;
 }
 
 interface Envelope {
@@ -58,6 +94,17 @@ interface Envelope {
   [key: string]: unknown;
 }
 
+/**
+ * A CloseEvent for a session loss that didn't come from the socket, so
+ * onClosed() consumers always get one. Codes are in the private 4000-4999
+ * range. Falls back to a plain object where CloseEvent isn't constructible.
+ */
+function syntheticClose(code: number, reason: string): CloseEvent {
+  if (typeof CloseEvent === "function")
+    return new CloseEvent("close", { code, reason, wasClean: false });
+  return { type: "close", code, reason, wasClean: false } as CloseEvent;
+}
+
 export class Proto4WebrtcClient {
   private ws: WebSocket;
   private nextId = 1;
@@ -66,6 +113,7 @@ export class Proto4WebrtcClient {
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
   private eventHandlers = new Set<(msg: Envelope) => void>();
+  private closeHandlers = new Set<(event: CloseEvent) => void>();
   // producerId/dataProducerId -> label, so close events (which only carry the
   // id) can be reported per label. Media producers carry theirs in appData.
   private producerLabels = new Map<string, string | undefined>();
@@ -99,6 +147,76 @@ export class Proto4WebrtcClient {
           );
       }
     };
+    // The signaling socket dying takes the session with it — a mobile browser
+    // suspended in the background is the common case. Fail everything in
+    // flight (a pending request would otherwise hang forever) and tell the
+    // caller, so it can reconnect.
+    this.ws.onclose = (e) => this.handleDisconnect(e, "signaling socket closed");
+  }
+
+  private handleDisconnect(event: CloseEvent, reason: string): void {
+    if (this.closed) return; // our own close(), already reported
+    this.closed = true;
+    this.failPending(reason);
+    const handlers = [...this.closeHandlers];
+    this.closeHandlers.clear();
+    for (const cb of handlers) cb(event);
+  }
+
+  private failPending(reason: string): void {
+    for (const p of this.pending.values()) p.reject(new Error(reason));
+    this.pending.clear();
+    for (const pending of this.rpcPending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(reason));
+    }
+    this.rpcPending.clear();
+    for (const gate of this.channelReady.values()) gate.resolve();
+  }
+
+  /**
+   * Called once when the session is lost for any reason other than a local
+   * close() — the signaling socket closing, or the receive transport failing.
+   * Everything on this client is dead at that point; reconnect by calling
+   * connectToSfu() again. Returns an unsubscribe function.
+   *
+   * The callback gets the socket's CloseEvent; when the loss came from the
+   * transport rather than the socket, it is a synthetic event with a private
+   * code (4001 transport failed, 4002 transport closed) so close-code based
+   * reconnect policies still see something meaningful.
+   */
+  onClosed(cb: (event: CloseEvent) => void): () => void {
+    if (this.closed) {
+      cb(syntheticClose(4003, "client already closed"));
+      return () => {};
+    }
+    this.closeHandlers.add(cb);
+    return () => this.closeHandlers.delete(cb);
+  }
+
+  /** True once the client is closed locally or the session was lost. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  /**
+   * Round-trip a cheap signaling request, rejecting after `timeoutMs`. Use it
+   * to check whether a client that looks connected really is — e.g. after a
+   * mobile browser comes back from the background, where a suspended socket
+   * can still read as open.
+   */
+  async ping(timeoutMs = 5_000): Promise<void> {
+    if (this.closed) throw new Error("client closed");
+    let timer: ReturnType<typeof setTimeout>;
+    await Promise.race([
+      this.request("getRtpCapabilities"),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`ping timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer!));
   }
 
   private trackLabel(msg: Envelope): void {
@@ -121,8 +239,23 @@ export class Proto4WebrtcClient {
     const url = options.url ?? `${proto}://${window.location.host}/api/sfu`;
     const client = new Proto4WebrtcClient(url, options.onConnectionState, options.onError);
     await new Promise<void>((resolve, reject) => {
-      client.ws.onopen = () => resolve();
-      client.ws.onerror = () => reject(new Error("ws error"));
+      // The browser tells the page nothing about why a handshake failed (it
+      // only logs it), so name the endpoint at least. A close without an open
+      // is the same failure seen from the other event; whichever fires first
+      // settles the promise.
+      const fail = () => {
+        client.closed = true; // never opened: no session to report as lost
+        reject(new Error(`failed to connect to ${url}`));
+      };
+      client.ws.onerror = fail;
+      client.ws.onclose = fail;
+      client.ws.onopen = () => {
+        // Hand the socket back to the disconnect path now that it is up.
+        client.ws.onerror = null;
+        client.ws.onclose = (e) =>
+          client.handleDisconnect(e, "signaling socket closed");
+        resolve();
+      };
     });
 
     const routerRtpCapabilities =
@@ -145,9 +278,24 @@ export class Proto4WebrtcClient {
         .then(() => cb())
         .catch(errback);
     });
-    client.recvTransport.on("connectionstatechange", (state) =>
-      client.onConnectionState?.(state),
-    );
+    client.recvTransport.on("connectionstatechange", (state) => {
+      client.onConnectionState?.(state);
+      // ICE/DTLS gave up: the session is unrecoverable even though the
+      // signaling socket may still read as open (typical after a mobile
+      // browser is suspended in the background). Report it like a close so
+      // reconnect logic has one signal to watch. "disconnected" is left
+      // alone — ICE recovers from that on its own.
+      if (state === "failed")
+        client.handleDisconnect(
+          syntheticClose(4001, "recv transport failed"),
+          "recv transport failed",
+        );
+      else if (state === "closed")
+        client.handleDisconnect(
+          syntheticClose(4002, "recv transport closed"),
+          "recv transport closed",
+        );
+    });
 
     // Seed the id->label map with producers already online, so a close event
     // can be reported per label even for producers no stream subscribed to.
@@ -463,12 +611,8 @@ export class Proto4WebrtcClient {
 
   close(): void {
     this.closed = true;
-    for (const pending of this.rpcPending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("client closed"));
-    }
-    this.rpcPending.clear();
-    for (const gate of this.channelReady.values()) gate.resolve();
+    this.closeHandlers.clear(); // a local close is not a session loss
+    this.failPending("client closed");
     void this.sendTransportPromise?.then((t) => t.close()).catch(() => {});
     this.recvTransport?.close();
     this.ws.close();

@@ -18,6 +18,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastConnectError } from "@/lib/toast";
 import AuthControl from "@/components/AuthControl";
 
 interface Entry {
@@ -84,7 +85,7 @@ export default function Home() {
   // Empty options: nothing is subscribed, but per-label `online` and
   // `onlineLabels` still track the SFU's producer registry.
   const { telemetry, pointcloud, mission_status, connectionState, onlineLabels } =
-    useSfu({});
+    useSfu({}, { onConnectError: toastConnectError });
 
   const streamOnline: Record<string, boolean> = {
     telemetry: telemetry.online,

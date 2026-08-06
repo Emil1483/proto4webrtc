@@ -12,6 +12,16 @@ export function toastError(err: unknown, fallback = "Something went wrong") {
 }
 
 /**
+ * onConnectError handler for useSfu(). Fires on every failed connect attempt
+ * — once a second while the SFU is down (a dev server restart, say) — so only
+ * the first one is toasted; the reconnecting chip carries the rest.
+ */
+export function toastConnectError(err: Error, attempt: number) {
+  if (attempt > 1) return;
+  enqueueSnackbar(`SFU unreachable: ${err.message}`, { variant: "error" });
+}
+
+/**
  * onError handler for useSfu()/connectToSfu(). Fires when a background
  * subscription is rejected — most commonly consuming a protected stream
  * (camera, pointcloud) while not logged in. Those throw asynchronously inside

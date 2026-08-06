@@ -269,6 +269,51 @@ only offered for messages with a scalar `stamp` field. Media tracks and rpc
 go through the returned `client` (a `StreamsClient`, `null` while
 connecting).
 
+#### Reconnecting
+
+A lost session reconnects on its own — the signaling socket closing, or the
+receive transport reaching `failed`/`closed` (what a phone does after a while
+with the browser in the background: it comes back to a dead session that used
+to need a page refresh). The hook drops the old client, waits out a backoff,
+connects again, and re-subscribes every label; `reconnecting` /
+`reconnectAttempt` describe the gap, and `reconnect()` forces one now. Coming
+back to a visible tab (or `online` firing) pings the current session and
+reconnects immediately if the ping fails, instead of sitting out the backoff.
+
+Defaults are retry forever, one second apart. The attempt counter resets on
+every successful connect. Override through the same
+`Proto4WebrtcClientOptions` object:
+
+```tsx
+const { telemetry, reconnecting, reconnectAttempt, reconnect } = useSfu(
+  { telemetry: {} },
+  {
+    reconnectAttempts: -1,                  // -1 (default) = unlimited, 0 = off
+    reconnectInterval: 1000,                // ms, or (attempt) => ms for backoff
+    shouldReconnect: (event) => event.code !== 4401, // socket CloseEvent
+    onReconnectStop: (numAttempts) => toast(`gave up after ${numAttempts}`),
+    onConnectError: (err, attempt) => {           // one per failed attempt
+      if (attempt === 1) toast(err.message);      // the rest ride the chip
+    },
+  },
+);
+```
+
+Transport-side losses have no socket close behind them, so `shouldReconnect`
+gets a synthetic `CloseEvent` with a private code: 4000 connect failed, 4001
+transport failed, 4002 transport closed.
+
+Failed connects are yours to present: `onConnectError` fires once per attempt
+(so once a second while the SFU is down — a dev server restart included) and
+the library shows nothing itself. Without the handler it falls back to a
+`console.warn`, never a `console.error`, so a retry loop doesn't raise a
+framework error overlay.
+
+On the plain client (no React), `client.onClosed(cb)` reports the same losses
+— everything in flight is rejected first, so a pending request can't hang on
+a dead socket — and `client.ping()` round-trips a signaling request with a
+timeout to check whether a session that looks open really is.
+
 ### TypeScript (SFU side, server)
 
 `npm install proto4webrtc`. `Proto4WebrtcSfu` is the whole server: signaling,

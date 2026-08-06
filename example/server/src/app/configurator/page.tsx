@@ -16,13 +16,13 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
-import { toastError, toastSfuError } from "@/lib/toast";
+import { toastConnectError, toastError, toastSfuError } from "@/lib/toast";
 import type { Mission } from "@/gen/rov_config/mission_pb";
 
 export default function ConfiguratorPage() {
   const { client, connectionState, onlineLabels } = useSfu(
     {},
-    { onError: toastSfuError },
+    { onError: toastSfuError, onConnectError: toastConnectError },
   );
   const online = onlineLabels.has("configurator/responses");
 

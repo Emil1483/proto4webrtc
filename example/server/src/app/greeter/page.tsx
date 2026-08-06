@@ -23,7 +23,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
-import { toastError, toastSfuError } from "@/lib/toast";
+import { toastConnectError, toastError, toastSfuError } from "@/lib/toast";
 
 export default function GreeterPage() {
   const [name, setName] = useState("browser");
@@ -31,7 +31,7 @@ export default function GreeterPage() {
   const [count, setCount] = useState<number | null>(null);
   const { client, connectionState, onlineLabels } = useSfu(
     {},
-    { onError: toastSfuError },
+    { onError: toastSfuError, onConnectError: toastConnectError },
   );
   // The service is being served while the robot produces its responses channel.
   const online = onlineLabels.has("greeter/responses");

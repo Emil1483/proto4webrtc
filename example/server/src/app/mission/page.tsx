@@ -14,6 +14,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { useSfu } from "@/gen/proto4webrtc_react";
+import { toastConnectError } from "@/lib/toast";
 
 function Row({ name, value }: { name: string; value: string }) {
   return (
@@ -29,9 +30,10 @@ function Row({ name, value }: { name: string; value: string }) {
 }
 
 export default function MissionPage() {
-  const { mission_status, connectionState } = useSfu({
-    mission_status: { forceInOrder: true },
-  });
+  const { mission_status, connectionState } = useSfu(
+    { mission_status: { forceInOrder: true } },
+    { onConnectError: toastConnectError },
+  );
   const msg = mission_status.latest;
 
   return (
