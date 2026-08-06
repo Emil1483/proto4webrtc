@@ -15,6 +15,7 @@ import fractions
 import json
 import logging
 import time
+import traceback
 
 import websockets
 from aiortc import MediaStreamTrack
@@ -316,6 +317,14 @@ class Proto4WebrtcClient:
     """
 
     RECONNECT_DELAY_S = 3.0
+    # How long a transport may sit in "disconnected" before we give up on it
+    # and cycle the whole connection. ICE often recovers on its own from a
+    # brief network blip, so don't tear down on the first hiccup.
+    DISCONNECT_GRACE_S = 10.0
+    # websocket keepalive: without this a half-open TCP connection (server
+    # killed, NAT entry evicted) can hang the reader indefinitely.
+    PING_INTERVAL_S = 20.0
+    PING_TIMEOUT_S = 20.0
 
     def __init__(
         self,
@@ -344,6 +353,9 @@ class Proto4WebrtcClient:
         self._event_handlers: list = []
         self._next_id = 1
         self._stop_event: asyncio.Event | None = None
+        # Set when a transport dies while the signaling socket is still up, so
+        # _connect_once() stops waiting on the reader and cycles the connection.
+        self._conn_lost: asyncio.Event | None = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -374,7 +386,21 @@ class Proto4WebrtcClient:
             try:
                 await self._connect_once()
             except (OSError, websockets.WebSocketException) as exc:
-                self._logger.warn(f"signaling connection failed: {exc}")
+                self._logger.warning(f"signaling connection failed: {exc}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Anything else (a mediasoup/aiortc error, a failed rpc during
+                # setup) used to escape run_forever() and kill the process.
+                # Log it and reconnect instead -- a robot that stops streaming
+                # because the SFU restarted mid-handshake is the worst outcome.
+                # .error, not .exception: the logger may be a ROS2
+                # RcutilsLogger, which has no exception(). Format the traceback
+                # in ourselves so a crash is still diagnosable.
+                self._logger.error(
+                    f"connection attempt failed: {exc!r}\n"
+                    + "".join(traceback.format_exception(exc))
+                )
             if not self._stop_event.is_set():
                 self._logger.info(f"reconnecting in {self.reconnect_delay}s")
                 try:
@@ -434,8 +460,41 @@ class Proto4WebrtcClient:
 
     # --- asyncio / mediasoup -------------------------------------------------
 
+    def _watch_transport(self, transport, name: str) -> None:
+        """Log transport state and trip _conn_lost when it stops working.
+
+        The signaling socket can stay perfectly healthy while the media
+        transport dies (ICE consent failure, DTLS teardown, the SFU closing the
+        transport), so transport death has to drive the reconnect loop too --
+        otherwise the client sits forever on a connection that sends nothing.
+        """
+        grace: asyncio.TimerHandle | None = None
+
+        def lose(reason: str) -> None:
+            if self._conn_lost is not None and not self._conn_lost.is_set():
+                self._logger.warning(
+                    f"{name} transport {reason}: dropping connection to reconnect"
+                )
+                self._conn_lost.set()
+
+        @transport.on("connectionstatechange")
+        async def on_conn_state(state):
+            nonlocal grace
+            self._logger.info(f"{name} transport state: {state}")
+            if grace is not None:
+                grace.cancel()
+                grace = None
+            if state in ("failed", "closed"):
+                lose(state)
+            elif state == "disconnected":
+                grace = self._loop.call_later(
+                    self.DISCONNECT_GRACE_S,
+                    lambda: lose(f"disconnected for {self.DISCONNECT_GRACE_S}s"),
+                )
+
     async def _connect_once(self) -> None:
         self._pending = {}
+        self._conn_lost = asyncio.Event()
         transport = None
         recv_transport = None
         rpc_event_handler = None
@@ -448,7 +507,10 @@ class Proto4WebrtcClient:
             {"Authorization": f"Bearer {self.token}"} if self.token else None
         )
         async with websockets.connect(
-            self.signaling_url, additional_headers=headers
+            self.signaling_url,
+            additional_headers=headers,
+            ping_interval=self.PING_INTERVAL_S,
+            ping_timeout=self.PING_TIMEOUT_S,
         ) as ws:
             self._ws = ws
             reader_task = asyncio.ensure_future(self._reader(ws))
@@ -475,9 +537,7 @@ class Proto4WebrtcClient:
                     ),
                 )
 
-                @transport.on("connectionstatechange")
-                async def on_conn_state(state):
-                    self._logger.info(f"send transport state: {state}")
+                self._watch_transport(transport, "send")
 
                 @transport.on("connect")
                 async def on_connect(dtlsParameters):
@@ -532,9 +592,30 @@ class Proto4WebrtcClient:
                 ] + [f"{s.LABEL}/rpc" for s in self._rpc_services]
                 self._logger.info(f"producing: {', '.join(produced) or '(nothing)'}")
 
-                await reader_task  # returns when the socket closes
+                # Whichever comes first: the socket closing, a transport dying,
+                # or stop() being called.
+                lost_task = asyncio.ensure_future(self._conn_lost.wait())
+                stop_task = asyncio.ensure_future(self._stop_event.wait())
+                try:
+                    await asyncio.wait(
+                        [reader_task, lost_task, stop_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    lost_task.cancel()
+                    stop_task.cancel()
+                if reader_task.done() and not reader_task.cancelled():
+                    reader_task.result()  # surface a reader crash to _run()
             finally:
+                # Marks the connection dead before teardown, so the "closed"
+                # states our own transport.close() emits don't log as failures.
+                self._conn_lost.set()
                 reader_task.cancel()
+                self._ws = None
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(ConnectionError("signaling connection closed"))
+                self._pending = {}
                 for dp in self._data_producers:
                     dp._detach()
                 for mp in self._media_producers:
@@ -543,11 +624,13 @@ class Proto4WebrtcClient:
                     svc._detach()
                 if rpc_event_handler is not None:
                     self._event_handlers.remove(rpc_event_handler)
-                self._ws = None
-                if transport is not None:
-                    await transport.close()
-                if recv_transport is not None:
-                    await recv_transport.close()
+                for t in (transport, recv_transport):
+                    if t is None:
+                        continue
+                    try:
+                        await t.close()
+                    except Exception as exc:  # never let cleanup break the loop
+                        self._logger.warning(f"transport close failed: {exc}")
 
     async def _serve_rpc(self, device):
         """Consume every browser's "<label>/requests" channel (current and
@@ -564,6 +647,8 @@ class Proto4WebrtcClient:
                 else None
             ),
         )
+
+        self._watch_transport(recv_transport, "recv")
 
         @recv_transport.on("connect")
         async def on_connect(dtlsParameters):
