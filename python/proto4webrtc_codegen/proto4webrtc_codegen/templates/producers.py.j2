@@ -78,6 +78,9 @@ class {{ s.class_name }}(MediaProducerBase):
 
     LABEL = "{{ s.label }}"
     KIND = "{{ s.kind }}"
+{% if s.video_codec %}
+    VIDEO_CODEC = "{{ s.video_codec }}"
+{% endif %}
 {% if s.protected %}
     PROTECTED = True
 {% endif %}

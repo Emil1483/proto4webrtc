@@ -35,6 +35,13 @@ except ImportError:  # pragma: no cover - numpy is a hard dependency, kept soft 
 
 _CLOCK_RATE_BY_KIND = {"video": 90000, "audio": 48000}
 
+# proto4webrtc.VideoCodec value name -> RTP mime type.
+_VIDEO_CODEC_MIME = {"VP8": "video/VP8", "VP9": "video/VP9", "H264": "video/H264"}
+# What aiortc can actually *encode* (aiortc.codecs: VP8 via libvpx, H264 via
+# libx264). VP9 is decode-and-browser-only, so a Python producer declaring it
+# has to fail loudly rather than silently fall back to VP8.
+_ENCODABLE_VIDEO_CODECS = frozenset({"VP8", "H264"})
+
 
 def _dump(model):
     """Serialize a pymediasoup pydantic model to a JSON-ready dict (camelCase)."""
@@ -167,6 +174,10 @@ class MediaProducerBase:
 
     LABEL: str
     KIND: str
+    # proto4webrtc.VideoCodec value name from the media_stream annotation
+    # ("VP8" / "VP9" / "H264"), or None for "whatever the SFU router prefers"
+    # (unset annotation). Video only.
+    VIDEO_CODEC: str | None = None
     # Admin-only stream: rides to the SFU in appData so it can deny guests.
     PROTECTED: bool = False
 
@@ -175,12 +186,62 @@ class MediaProducerBase:
         self._track = track
         self._producer = None
 
+    def _codec(self):
+        """The negotiated RtpCodecCapability this stream must be sent with.
+
+        None means "no constraint": the handler keeps the router's preference
+        order (first codec of the matching kind). Otherwise the capability is
+        taken from the *negotiated* send capabilities rather than built here,
+        so its parameters (H264 profile-level-id, VP9 profile-id) are by
+        construction the ones both ends agreed on -- pymediasoup's
+        reduceCodecs() matches them strictly and raises otherwise.
+        """
+        if not self.VIDEO_CODEC or self.VIDEO_CODEC == "VIDEO_CODEC_UNSPECIFIED":
+            return None
+        if self.VIDEO_CODEC not in _ENCODABLE_VIDEO_CODECS:
+            raise RuntimeError(
+                f"media stream {self.LABEL!r} declares video_codec "
+                f"{self.VIDEO_CODEC}, which the Python producer runtime cannot "
+                f"encode (aiortc encodes "
+                f"{', '.join(sorted(_ENCODABLE_VIDEO_CODECS))} only). Declare "
+                f"one of those, or produce this stream from a browser and drop "
+                f"it from this process's streams= selection."
+            )
+
+        mime = _VIDEO_CODEC_MIME[self.VIDEO_CODEC].lower()
+        caps = self._client._send_rtp_capabilities
+        codecs = caps.codecs if caps else []
+        for codec in codecs:
+            if codec.kind == self.KIND and codec.mimeType.lower() == mime:
+                # Defensive copy: the capability list is the device's, and
+                # reduceCodecs()/matchCodecs() are free to touch parameters.
+                if hasattr(codec, "model_copy"):
+                    return codec.model_copy(deep=True)
+                return codec
+
+        offered = (
+            ", ".join(sorted({c.mimeType for c in codecs if c.kind == self.KIND}))
+            or "none"
+        )
+        raise RuntimeError(
+            f"media stream {self.LABEL!r} declares video_codec "
+            f"{self.VIDEO_CODEC}, but {_VIDEO_CODEC_MIME[self.VIDEO_CODEC]} is "
+            f"not in the capabilities negotiated with the SFU (offered: "
+            f"{offered}). Add it to the SFU's router.mediaCodecs "
+            f"(Proto4WebrtcSfu config) -- the defaults carry VP8, VP9, H264 "
+            f"and Opus, so this usually means the SFU overrides them."
+        )
+
     async def _attach(self, transport) -> None:
         app_data = {"label": self.LABEL}
         if self.PROTECTED:
             app_data["protected"] = True
+        codec = self._codec()
         self._producer = await transport.produce(
-            track=self._track, stopTracks=False, appData=app_data
+            track=self._track,
+            stopTracks=False,
+            appData=app_data,
+            **({"codec": codec} if codec is not None else {}),
         )
 
     def _detach(self) -> None:
@@ -358,6 +419,10 @@ class Proto4WebrtcClient:
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws = None
+        # Send capabilities of the loaded Device (local codecs ∩ the router's),
+        # set on every (re)connect. Media producers pick their declared codec
+        # out of this list; see MediaProducerBase._codec().
+        self._send_rtp_capabilities = None
         self._pending: dict[int, asyncio.Future] = {}
         self._event_handlers: list = []
         self._next_id = 1
@@ -532,6 +597,7 @@ class Proto4WebrtcClient:
                     )
                 )
                 await device.load(RtpCapabilities(**router_caps))
+                self._send_rtp_capabilities = device.sendRtpCapabilities
 
                 params = await self.rpc("createTransport", {"direction": "send"})
                 transport = device.createSendTransport(
@@ -621,6 +687,7 @@ class Proto4WebrtcClient:
                 self._conn_lost.set()
                 reader_task.cancel()
                 self._ws = None
+                self._send_rtp_capabilities = None
                 for fut in self._pending.values():
                     if not fut.done():
                         fut.set_exception(ConnectionError("signaling connection closed"))

@@ -57,6 +57,7 @@ function generate(request, { react = false } = {}) {
   // Absent when the compiled set carries a pre-auth options.proto.
   const protectedExt = registry.getExtension("proto4webrtc.protected");
   const mediaKind = registry.getEnum("proto4webrtc.MediaKind");
+  const videoCodecEnum = registry.getEnum("proto4webrtc.VideoCodec");
   if (!dataExt || !mediaExt || !mediaKind) {
     throw new GenError(
       "proto4webrtc/options.proto missing from the compiled files",
@@ -94,7 +95,19 @@ function generate(request, { react = false } = {}) {
         const kind = mediaKind.values.find((v) => v.number === o.kind)?.name;
         if (!kind || kind === "MEDIA_KIND_UNSPECIFIED")
           throw new GenError(`${message.typeName}: media_stream needs kind`);
+        const codecName = videoCodecEnum?.values.find(
+          (v) => v.number === o.videoCodec,
+        )?.name;
+        const videoCodec =
+          !codecName || codecName === "VIDEO_CODEC_UNSPECIFIED"
+            ? null
+            : codecName;
+        if (kind === "AUDIO" && videoCodec)
+          throw new GenError(
+            `${message.typeName}: media_stream is kind: AUDIO and cannot set video_codec (${videoCodec}); audio is Opus`,
+          );
         mediaStreams.push({
+          videoCodec,
           message: message.name,
           typeName: message.typeName,
           protoFile: file.proto.name,
@@ -290,12 +303,18 @@ ${subscribeBody}
 
   const mediaBlocks = mediaStreams.map(
     (s) => `\
-/** Media stream "${s.label}" (${s.kind}${s.protected ? ", admin-only" : ""}); track arrives over RTP. */
+/** Media stream "${s.label}" (${s.kind}${s.videoCodec ? `, ${s.videoCodec}` : ""}${s.protected ? ", admin-only" : ""}); track arrives over RTP. */
 export const ${exportName(s.message)} = {
   label: "${s.label}",
   /** Admin-only: the SFU denies guests this stream when auth is enabled. */
   protected: ${s.protected},
   kind: "${s.kind}",
+  /**
+   * Codec the producer is pinned to (declared with video_codec); null means
+   * the router's preferred codec for this kind. Informational on the
+   * consumer side -- the browser decodes whatever the producer sent.
+   */
+  videoCodec: ${s.videoCodec ? `"${s.videoCodec}"` : "null"},
   /**
    * Typed wrapper over Proto4WebrtcClient.onMedia() (npm package
    * "proto4webrtc/client"): the stream's track into the callback, covering

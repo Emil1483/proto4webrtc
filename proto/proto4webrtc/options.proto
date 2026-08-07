@@ -62,9 +62,15 @@ enum MediaKind {
   AUDIO = 2;
 }
 
+// Codec a video stream is produced with. The producer pins it against the
+// capabilities negotiated with the SFU, so it decides what goes on the wire;
+// the SFU's default router declares all of these plus Opus.
 enum VideoCodec {
-  VIDEO_CODEC_UNSPECIFIED = 0;  // router default
+  // The router's preferred codec for the kind (VP8 with the default config).
+  VIDEO_CODEC_UNSPECIFIED = 0;
   VP8 = 1;
+  // Browser senders only: the Python producer runtime (aiortc) cannot encode
+  // VP9 and refuses to produce such a stream.
   VP9 = 2;
   H264 = 3;
 }
@@ -73,6 +79,8 @@ message MediaStreamOptions {
   // Track identifier, sent as producer appData.label. Unique across streams.
   string label = 1;
   MediaKind kind = 2;
+  // VIDEO only; setting it on an AUDIO stream (always Opus) is a generation
+  // error.
   VideoCodec video_codec = 3;
   // Admin-only: guests are denied consume for this track at the SFU.
   // Enforced only when the host passes non-robot roles (see enum Role).

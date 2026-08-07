@@ -10,6 +10,7 @@ import time
 
 import numpy as np
 import pytest
+from pymediasoup.rtp_parameters import RtpCapabilities, RtpCodecCapability
 
 from proto4webrtc.runtime import (
     DataProducerBase,
@@ -42,8 +43,9 @@ class FakeMessage:
 class DummyClient:
     """Just enough of Proto4WebrtcClient for DataProducerBase.send()."""
 
-    def __init__(self, loop):
+    def __init__(self, loop, send_rtp_capabilities=None):
         self._loop = loop
+        self._send_rtp_capabilities = send_rtp_capabilities
 
 
 def test_send_before_attach_is_a_safe_no_op():
@@ -126,9 +128,11 @@ class FakeProducer:
 class FakeTransport:
     def __init__(self):
         self.produce_calls = []
+        self.produce_kwargs = []
 
-    async def produce(self, track, stopTracks, appData):
+    async def produce(self, track, stopTracks, appData, **kwargs):
         self.produce_calls.append((track, stopTracks, appData))
+        self.produce_kwargs.append(kwargs)
         return FakeProducer()
 
 
@@ -146,6 +150,89 @@ async def test_media_producer_attach_wires_track_with_label():
 
     mp._detach()
     assert mp._producer is None
+
+
+def _video_caps(*mime_types):
+    """A pymediasoup RtpCapabilities carrying one video codec per mime type."""
+    return RtpCapabilities(
+        codecs=[
+            RtpCodecCapability(
+                kind="video",
+                mimeType=mime,
+                clockRate=90000,
+                preferredPayloadType=96 + i,
+                parameters=(
+                    {"packetization-mode": 1, "profile-level-id": "42e01f"}
+                    if mime == "video/H264"
+                    else {}
+                ),
+            )
+            for i, mime in enumerate(mime_types)
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_producer_pins_the_declared_codec():
+    class H264Stream(MediaProducerBase):
+        LABEL = "camera"
+        KIND = "video"
+        VIDEO_CODEC = "H264"
+
+    caps = _video_caps("video/VP8", "video/H264")
+    mp = H264Stream(DummyClient(loop=None, send_rtp_capabilities=caps), FrameTrack())
+    transport = FakeTransport()
+
+    await mp._attach(transport)
+
+    # The capability handed to produce() is the negotiated one, parameters
+    # included -- pymediasoup's reduceCodecs() matches H264 strictly.
+    codec = transport.produce_kwargs[0]["codec"]
+    assert codec.mimeType == "video/H264"
+    assert codec.parameters["profile-level-id"] == "42e01f"
+
+
+@pytest.mark.asyncio
+async def test_media_producer_without_a_declared_codec_leaves_the_choice_open():
+    mp = MediaProducerBase(
+        DummyClient(loop=None, send_rtp_capabilities=_video_caps("video/VP8")),
+        FrameTrack(),
+    )
+    mp.LABEL = "camera"
+
+    await mp._attach(FakeTransport())
+
+    assert mp._producer is not None
+
+
+def test_media_producer_rejects_a_codec_aiortc_cannot_encode():
+    class Vp9Stream(MediaProducerBase):
+        LABEL = "camera"
+        KIND = "video"
+        VIDEO_CODEC = "VP9"
+
+    mp = Vp9Stream(
+        DummyClient(loop=None, send_rtp_capabilities=_video_caps("video/VP9")),
+        FrameTrack(),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot encode"):
+        mp._codec()
+
+
+def test_media_producer_reports_a_codec_the_sfu_does_not_offer():
+    class H264Stream(MediaProducerBase):
+        LABEL = "camera"
+        KIND = "video"
+        VIDEO_CODEC = "H264"
+
+    mp = H264Stream(
+        DummyClient(loop=None, send_rtp_capabilities=_video_caps("video/VP8")),
+        FrameTrack(),
+    )
+
+    with pytest.raises(RuntimeError, match="video/VP8"):
+        mp._codec()
 
 
 def test_frame_track_survives_stop():

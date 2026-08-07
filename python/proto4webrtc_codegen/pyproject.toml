@@ -1,6 +1,6 @@
 [project]
 name = "proto4webrtc-codegen"
-version = "1.7.3"
+version = "1.7.4"
 description = "Generate mediasoup producer code (pymediasoup) from proto4webrtc-annotated protofiles"
 readme = "README.md"
 license = { text = "MIT" }

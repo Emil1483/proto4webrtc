@@ -65,6 +65,11 @@ export function buildDefaultConfig(
       logTags: ["info", "ice", "dtls", "rtp", "srtp", "rtcp"],
     },
 
+    // Every codec a declared media stream can ask for (proto option
+    // `video_codec`), so the annotation alone decides what goes on the wire
+    // and no SFU-side config is needed. The producer picks one out of this
+    // set at produce() time; consumers follow whatever the producer chose.
+    // VP8 stays first: it is the fallback when a stream declares no codec.
     router: {
       mediaCodecs: [
         {
@@ -72,6 +77,33 @@ export function buildDefaultConfig(
           mimeType: "video/VP8",
           clockRate: 90000,
           parameters: {},
+        },
+        {
+          kind: "video",
+          mimeType: "video/VP9",
+          clockRate: 90000,
+          // profile-id 0 (8-bit 4:2:0) — the profile browsers offer by
+          // default. Only browser senders can produce VP9; aiortc cannot.
+          parameters: { "profile-id": 0 },
+        },
+        {
+          kind: "video",
+          mimeType: "video/H264",
+          clockRate: 90000,
+          // Constrained baseline 3.1, non-interleaved. Matches what aiortc
+          // (libx264) and browsers offer; a mismatch here means H264 simply
+          // never negotiates.
+          parameters: {
+            "packetization-mode": 1,
+            "level-asymmetry-allowed": 1,
+            "profile-level-id": "42e01f",
+          },
+        },
+        {
+          kind: "audio",
+          mimeType: "audio/opus",
+          clockRate: 48000,
+          channels: 2,
         },
       ],
     },

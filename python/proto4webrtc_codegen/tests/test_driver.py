@@ -119,3 +119,39 @@ def test_one_bundle_holds_every_stream_it_was_generated_from(tmp_path):
     source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
     for label in ("telemetry", "camera", "pointcloud", "mission_status"):
         assert f'"{label}", ' in source or f'"{label}")' in source
+
+
+def test_generated_media_producer_carries_the_declared_codec(tmp_path):
+    """video_codec is wired, not documentation: the class attribute is what
+    the runtime pins the mediasoup producer to."""
+    generate(proto_dirs=[EXAMPLE_PROTO], out_dir=tmp_path)
+
+    source = (tmp_path / "proto4webrtc_gen" / "producers.py").read_text()
+    assert "class CameraStreamProducer(MediaProducerBase):" in source
+    assert 'VIDEO_CODEC = "VP8"' in source
+
+
+def test_video_codec_on_an_audio_stream_is_rejected(tmp_path):
+    import shutil
+
+    import pytest
+
+    from proto4webrtc_codegen.extract import ExtractError
+
+    root = tmp_path / "protos"
+    shutil.copytree(EXAMPLE_PROTO, root)
+    (root / "bad.proto").write_text(
+        'syntax = "proto3";\n'
+        "package bad;\n"
+        'import "proto4webrtc/options.proto";\n'
+        "message Mic {\n"
+        "  option (proto4webrtc.media_stream) = {\n"
+        '    label: "mic"\n'
+        "    kind: AUDIO\n"
+        "    video_codec: H264\n"
+        "  };\n"
+        "}\n"
+    )
+
+    with pytest.raises(ExtractError, match="cannot set video_codec"):
+        generate(proto_dirs=[root], out_dir=tmp_path / "out")

@@ -170,6 +170,14 @@ def extract_streams(
                     raise ExtractError(
                         f"{fdp.name}: {msg.name} media_stream needs kind"
                     )
+                video_codec = _enum_name(
+                    pool, "proto4webrtc.VideoCodec", o.video_codec
+                )
+                if kind == "AUDIO" and video_codec != "VIDEO_CODEC_UNSPECIFIED":
+                    raise ExtractError(
+                        f"{fdp.name}: {msg.name} media_stream is kind: AUDIO and "
+                        f"cannot set video_codec ({video_codec}); audio is Opus"
+                    )
                 media_streams.append(
                     MediaStreamSpec(
                         proto_file=fdp.name,
@@ -177,9 +185,7 @@ def extract_streams(
                         message=msg.name,
                         label=o.label,
                         kind=kind.lower(),
-                        video_codec=_enum_name(
-                            pool, "proto4webrtc.VideoCodec", o.video_codec
-                        ),
+                        video_codec=video_codec,
                         protected=o.protected,
                     )
                 )

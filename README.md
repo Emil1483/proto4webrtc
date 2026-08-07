@@ -42,7 +42,7 @@ message Camera {
   option (proto4webrtc.media_stream) = {
     label: "camera"
     kind: VIDEO
-    video_codec: VP8
+    video_codec: VP8  // or H264; unset = router default. See "Choosing a video codec"
   };
 }
 
@@ -834,6 +834,98 @@ stripped), and the generated service base rejects guests calling `protected`
 methods with a "permission denied" rpc error. The robot never sees or
 verifies tokens.
 
+## Choosing a video codec
+
+`video_codec` on a `media_stream` pins the codec that stream is sent with.
+The generated producer carries it as `VIDEO_CODEC` and passes the matching
+negotiated capability to mediasoup's `produce()`, so the annotation alone
+decides what goes on the wire — the default router config declares VP8, VP9,
+H264 and Opus, so nothing needs configuring SFU-side. Leaving it unset means
+"the router's preferred codec for this kind" (VP8 today, being first in the
+default list). Mismatches fail loudly at connect time rather than silently
+falling back.
+
+### What the robot can actually encode
+
+The Python producer runtime is aiortc, whose video codec set is fixed:
+
+| Codec  | Python producer (aiortc)                                       | Browser producer | Notes                                                                       |
+| ------ | -------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------- |
+| `VP8`  | ✅ libvpx, software                                            | ✅               | The safe default. Universally decodable, tolerant of packet loss.           |
+| `H264` | ✅ libx264, software, constrained baseline, packetization-mode 1 | ✅               | Hardware decode almost everywhere (iOS/Safari, mobile SoCs). No B-frames.   |
+| `VP9`  | ❌ not implemented                                             | ✅               | Only reachable when the _sender_ is a browser. A robot cannot produce it.   |
+
+So on a robot the real choice is **VP8 or H264**.
+
+### Which to pick
+
+- **VP8 — default.** Pick it unless you have a specific reason not to. Every
+  browser decodes it, error resilience is good on lossy links, and it is what
+  an unset `video_codec` negotiates.
+- **H264 — pick when clients are battery-powered or CPU-bound.** Decode is
+  hardware-accelerated on essentially every phone, tablet and Mac, which
+  matters for a 24/7 operator tablet or an iOS client. Better quality per bit
+  than VP8 at the same bitrate, and the stream can be recorded/muxed straight
+  into MP4 without transcoding. Costs: `libx264` encode on the robot is
+  software (watch CPU on an SBC — an SoC hardware encoder is not used by
+  aiortc), constrained baseline only, and H264 carries patent-licensing
+  considerations VP8 does not.
+- **VP9 — only for browser-sourced video** (e.g. an operator sharing a
+  screen back). Better compression than both, at a markedly higher encode
+  cost. Annotating a robot stream with it makes that process refuse to
+  produce: `video_codec VP9 ... the Python producer runtime cannot encode`.
+
+`kind: AUDIO` streams are Opus and reject `video_codec` at generation time.
+
+### Declaring it
+
+Nothing beyond the annotation:
+
+```proto
+message Camera {
+  option (proto4webrtc.media_stream) = {
+    label: "camera"
+    kind: VIDEO
+    video_codec: H264
+  };
+}
+```
+
+The generated producer class gets `VIDEO_CODEC = "H264"` and pins its
+mediasoup producer to the negotiated `video/H264` capability — parameters
+(`profile-level-id`, `packetization-mode`) come from the negotiation itself,
+so there is nothing to keep in sync by hand.
+
+Overriding `router.mediaCodecs` replaces the default list wholesale, so an
+override must still contain every codec your streams declare, plus
+`audio/opus` if you have audio streams:
+
+```ts
+const sfu = new Proto4WebrtcSfu({
+  router: {
+    mediaCodecs: [
+      { kind: "video", mimeType: "video/VP8", clockRate: 90000, parameters: {} },
+      {
+        kind: "video",
+        mimeType: "video/H264",
+        clockRate: 90000,
+        parameters: {
+          // Must match what aiortc/browsers offer, or H264 never negotiates:
+          "packetization-mode": 1,
+          "level-asymmetry-allowed": 1,
+          "profile-level-id": "42e01f", // constrained baseline 3.1
+        },
+      },
+      { kind: "audio", mimeType: "audio/opus", clockRate: 48000, channels: 2 },
+    ],
+  },
+});
+```
+
+Drop a codec a stream declares and that stream's producer raises on connect,
+naming the stream, the codec, and what the SFU did offer — it does not
+silently fall back to VP8.
+
 ## Options reference
 
 | Option                | Applies to | Meaning                                                                                                               |
@@ -843,7 +935,7 @@ verifies tokens.
 | `backpressure`        | data       | `BUFFER_ALL` (default) or `DROP_IF_BUFFERED` (newest wins)                                                            |
 | `max_buffered_factor` | data       | `DROP_IF_BUFFERED` threshold, in multiples of message size (default 2)                                                |
 | `kind`                | media      | `VIDEO` or `AUDIO`                                                                                                    |
-| `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for router default                                                                     |
+| `video_codec`         | media      | `VP8`, `VP9`, `H264`, or unset for the router's preferred codec. Video only; pins the producer's codec (see [Choosing a video codec](#choosing-a-video-codec)) |
 | `label` (rpc)         | service    | Base channel label; `<label>/requests` and `<label>/responses` are derived and share the stream label namespace       |
 | `protected`           | data/media | Admin-only stream: the SFU denies guests `consume`/`consumeData` (enforced only when the host passes non-robot roles) |
 | `protected` (rpc)     | method     | Admin-only rpc method: the robot rejects guest callers (enforced only when the host passes non-robot roles)           |

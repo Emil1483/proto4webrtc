@@ -69,10 +69,10 @@ def _data_context(s: DataStreamSpec) -> dict:
 
 
 def _media_context(s: MediaStreamSpec) -> dict:
-    codec_doc = (
-        "" if s.video_codec == "VIDEO_CODEC_UNSPECIFIED" else f", {s.video_codec}"
-    )
+    unset = s.video_codec == "VIDEO_CODEC_UNSPECIFIED"
+    codec_doc = "" if unset else f", {s.video_codec}"
     return {
+        "video_codec": None if unset else s.video_codec,
         "attr": to_snake_case(s.message),
         "class_name": f"{s.message}Producer",
         "track_attr": f"_{to_snake_case(s.message)}_track",

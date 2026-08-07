@@ -206,3 +206,21 @@ test("subscribe: the returned unsubscribe closes the current consumer and stops 
   await settle();
   assert.equal(consumers.length, 1);
 });
+
+test("the default router declares every codec a media_stream can ask for", () => {
+  // A stream's `video_codec` annotation is enforced producer-side against the
+  // negotiated capabilities: a codec missing here means that stream cannot
+  // connect at all, so the defaults must cover the whole VideoCodec enum
+  // (plus Opus for kind: AUDIO).
+  const codecs = buildDefaultConfig({}).router.mediaCodecs!;
+  assert.deepEqual(
+    codecs.map((c) => c.mimeType),
+    ["video/VP8", "video/VP9", "video/H264", "audio/opus"],
+  );
+  // VP8 first: it is what an unset video_codec negotiates.
+  assert.equal(codecs[0].mimeType, "video/VP8");
+  const h264 = codecs.find((c) => c.mimeType === "video/H264")!;
+  // Without these, H264 never matches what aiortc and browsers offer.
+  assert.equal(h264.parameters!["packetization-mode"], 1);
+  assert.equal(h264.parameters!["profile-level-id"], "42e01f");
+});
